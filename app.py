@@ -1,378 +1,409 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import re
-import requests
+import unicodedata
 from io import BytesIO
 import plotly.express as px
 
-# Tải dữ liệu mặc định từ GitHub (file2, file3, file4)
-@st.cache_data
-def load_default_data():
-    url_file2 = "https://raw.githubusercontent.com/phamtai1211/Thau_3PPharma/main/file2.xlsx"
-    url_file3 = "https://raw.githubusercontent.com/phamtai1211/Thau_3PPharma/main/file3.xlsx"
-    url_file4 = "https://raw.githubusercontent.com/phamtai1211/Thau_3PPharma/main/nhom_dieu_tri.xlsx"
+# Cấu hình trang
+st.set_page_config(page_title="Phân Tích Dữ Liệu Thầu Thuốc", layout="wide")
 
-    file2 = pd.read_excel(BytesIO(requests.get(url_file2).content))
-    file3 = pd.read_excel(BytesIO(requests.get(url_file3).content))
-    file4 = pd.read_excel(BytesIO(requests.get(url_file4).content))
-    return file2, file3, file4
+# Hàm tiện ích
+def remove_accents(s: str) -> str:
+    """Loại bỏ dấu tiếng Việt (kể cả chữ đ) khỏi chuỗi."""
+    s = str(s)
+    s = s.replace("đ", "d").replace("Đ", "D")
+    return ''.join(ch for ch in unicodedata.normalize('NFD', s) if unicodedata.category(ch) != 'Mn')
 
-file2, file3, file4 = load_default_data()
+def normalize_text(s: str) -> str:
+    """Chuẩn hóa chuỗi để so sánh: hạ chữ thường, bỏ dấu, xóa khoảng trắng thừa, bỏ nội dung trong ngoặc, chuẩn hóa dấu + và /."""
+    if s is None:
+        return ""
+    s = remove_accents(s).lower()
+    s = re.sub(r'\([^)]*\)', '', s)        # bỏ nội dung trong ngoặc đơn
+    s = re.sub(r'\s+', ' ', s).strip()     # gộp nhiều khoảng trắng thành một, bỏ khoảng trắng đầu/cuối
+    s = re.sub(r'\s*\+\s*', '+', s)        # bỏ khoảng trắng quanh dấu +
+    s = re.sub(r'\s*\/\s*', '/', s)        # bỏ khoảng trắng quanh dấu /
+    s = s.replace(" ", "")                # xóa mọi khoảng trắng còn lại
+    return s
 
-# Hàm tiện ích chuẩn hóa chuỗi để so sánh (không phân biệt hoa thường, khoảng trắng, ký tự đặc biệt)
-def normalize_active(name: str) -> str:
-    # Bỏ nội dung trong ngoặc đơn, chuyển về chữ thường, bỏ dư khoảng trắng
-    return re.sub(r'\s+', ' ', re.sub(r'\(.*?\)', '', str(name))).strip().lower()
+def detect_header_row(file, sheet_name=0) -> int:
+    """Tìm chỉ số dòng tiêu đề cột (trong 10 dòng đầu) dựa trên các từ khóa nhận dạng cột."""
+    try:
+        sample_df = pd.read_excel(file, sheet_name=sheet_name, header=None, nrows=10)
+    except Exception:
+        return None
+    # Các từ khóa để nhận dạng dòng tiêu đề
+    keywords = ["tên thuốc", "hoạt chất", "hàm lượng", "nồng độ", "dạng bào chế",
+                "đường dùng", "số lượng", "đơn vị", "giá kế hoạch", "đơn giá trúng thầu",
+                "thành tiền", "nhà thầu", "miền", "vùng", "tỉnh", "bệnh viện", "syt",
+                "nhóm thuốc", "tên sản phẩm", "khách hàng"]
+    keywords_norm = [remove_accents(k).lower() for k in keywords]
+    header_idx = None
+    for i in range(min(10, len(sample_df))):
+        row_text = remove_accents(" ".join(sample_df.loc[i].fillna("").astype(str).tolist())).lower()
+        count = 0
+        for kw in keywords_norm:
+            if kw in row_text:
+                count += 1
+        if count >= 3:  # dòng có từ 3 từ khóa trở lên
+            header_idx = i
+            break
+    return header_idx
 
-def normalize_concentration(conc: str) -> str:
-    s = str(conc).lower()
-    # Thay dấu phẩy bằng dấu chấm (cho số thập phân)
-    s = s.replace(',', '.')
-    # Bỏ cụm 'dung tích'
-    s = s.replace('dung tích', '')
-    # Tách các phần bởi dấu comma nếu có
-    parts = [p.strip() for p in s.split(',') if p.strip() != '']
-    # Loại bỏ các phần chỉ chứa chữ (mô tả) không có số
-    parts = [p for p in parts if re.search(r'\d', p)]
-    # Nếu có 2 phần dạng "X mg" và "Y ml" thì ghép thành "Xmg/Yml"
-    if len(parts) >= 2 and re.search(r'(mg|mcg|g|%)', parts[0]) and 'ml' in parts[-1] and '/' not in parts[0]:
-        conc_norm = parts[0].replace(' ', '') + '/' + parts[-1].replace(' ', '')
+def load_excel(file):
+    """Đọc file Excel vào DataFrame, tự động phát hiện dòng tiêu đề."""
+    header_idx = detect_header_row(file)
+    try:
+        df = pd.read_excel(file, header=header_idx)
+    except Exception:
+        # Thử lại với engine openpyxl nếu cần
+        df = pd.read_excel(file, header=header_idx, engine='openpyxl')
+    return df, header_idx
+
+def identify_columns(df: pd.DataFrame):
+    """Xác định các cột quan trọng trong DataFrame dựa vào tên (đã bỏ dấu, lower)."""
+    col_map = {
+        "med_name": None,      # Tên thuốc hoặc Tên sản phẩm
+        "active": None,        # Hoạt chất
+        "strength": None,      # Hàm lượng/Nồng độ
+        "dosage_form": None,   # Dạng bào chế
+        "route": None,         # Đường dùng
+        "quantity": None,      # Số lượng
+        "unit": None,          # Đơn vị tính
+        "plan_price": None,    # Giá kế hoạch
+        "award_price": None,   # Đơn giá trúng thầu
+        "total_amount": None,  # Thành tiền
+        "winner": None,        # Nhà thầu trúng thầu
+        "customer": None,      # Khách hàng phụ trách
+        "region": None,        # Miền
+        "zone": None,          # Vùng
+        "province": None,      # Tỉnh
+        "hospital": None,      # Bệnh viện/SYT
+        "drug_group": None     # Nhóm thuốc (nếu có)
+    }
+    for col in df.columns:
+        col_norm = remove_accents(str(col)).lower()
+        if "hoat chat" in col_norm or "thanh phan" in col_norm:
+            col_map["active"] = col
+        elif "ham luong" in col_norm or "nong do" in col_norm:
+            col_map["strength"] = col
+        elif "dang bao che" in col_norm:
+            col_map["dosage_form"] = col
+        elif "duong dung" in col_norm:
+            col_map["route"] = col
+        elif col_norm.startswith("ten thuoc") or "ten thuoc" in col_norm:
+            if col_map["med_name"] is None:
+                col_map["med_name"] = col
+        elif "ten san pham" in col_norm:
+            if col_map["med_name"] is None:
+                col_map["med_name"] = col
+        elif col_norm.startswith("so luong") or col_norm == "so luong":
+            col_map["quantity"] = col
+        elif "don vi" in col_norm and "tinh" in col_norm:
+            col_map["unit"] = col
+        elif "gia ke hoach" in col_norm or "gia moi thau" in col_norm or "gia du kien" in col_norm:
+            col_map["plan_price"] = col
+        elif "don gia trung thau" in col_norm or "gia trung thau" in col_norm:
+            col_map["award_price"] = col
+        elif "thanh tien" in col_norm:
+            col_map["total_amount"] = col
+        elif "nha thau" in col_norm and "trung thau" in col_norm:
+            col_map["winner"] = col
+        elif "khach hang" in col_norm and "phu trach" in col_norm:
+            col_map["customer"] = col
+        elif col_norm == "mien":
+            col_map["region"] = col
+        elif col_norm == "vung":
+            col_map["zone"] = col
+        elif col_norm == "tinh":
+            col_map["province"] = col
+        elif "benh vien" in col_norm or col_norm.startswith("so y te"):
+            col_map["hospital"] = col
+        elif "nhom thuoc" in col_norm:
+            col_map["drug_group"] = col
+    return col_map
+
+def format_number(num):
+    """Định dạng số liệu (tiền tệ hoặc số lượng) để hiển thị."""
+    try:
+        value = float(num)
+    except:
+        # nếu không phải số thì trả về chuỗi gốc
+        return str(num)
+    if value >= 1e9:
+        return f"{value/1e9:.2f} tỷ"
+    elif value >= 1e6:
+        return f"{value/1e6:.1f} triệu"
+    elif value >= 1000:
+        return f"{int(value):,}"
     else:
-        conc_norm = ''.join([p.replace(' ', '') for p in parts])
-    # Chuẩn hóa dấu cộng (nếu có dạng "mg + mg")
-    conc_norm = conc_norm.replace('+', '+')
-    return conc_norm
+        return str(int(value) if value.is_integer() else round(value, 2))
 
-def normalize_group(grp: str) -> str:
-    # Trích phần số trong mã nhóm thuốc (vd "Nhóm 4" -> "4", "N4" -> "4")
-    return re.sub(r'\D', '', str(grp)).strip()
+# Giao diện sidebar tải file
+st.sidebar.header("📁 Chọn File Dữ Liệu")
+tender_file = st.sidebar.file_uploader("Danh mục mời thầu (Excel)", type=["xlsx", "xls", "csv"])
+company_file = st.sidebar.file_uploader("Danh mục sản phẩm công ty (Excel/CSV)", type=["xlsx", "xls", "csv"])
+assign_file = st.sidebar.file_uploader("File phân công KH phụ trách (tùy chọn)", type=["xlsx", "xls", "csv"])
+awarded_file = st.sidebar.file_uploader("Danh mục trúng thầu (Excel)", type=["xlsx", "xls", "csv"])
 
-# Sidebar: Chọn chức năng chính
-st.sidebar.title("Chức năng")
-option = st.sidebar.radio("Chọn chức năng", 
-    ["Lọc Danh Mục Thầu", "Phân Tích Danh Mục Thầu", "Phân Tích Danh Mục Trúng Thầu", "Đề Xuất Hướng Triển Khai"])
+# Tạo các tab
+tab1, tab2, tab3 = st.tabs(["🔎 Lọc Danh Mục Thầu", "📊 Phân Tích Danh Mục Thầu", "🏆 Phân Tích Danh Mục Trúng Thầu"])
 
-# 1. Lọc Danh Mục Thầu
-if option == "Lọc Danh Mục Thầu":
-    st.header("📂 Lọc Danh Mục Thầu")
-    # Chọn Miền
-    regions = sorted(file3["Miền"].dropna().unique())
-    selected_region = st.selectbox("Chọn Miền", regions)
-    sub_df = file3[file3["Miền"] == selected_region] if selected_region else file3.copy()
-    # Chọn Vùng (nếu có)
-    areas = sorted(sub_df["Vùng"].dropna().unique())
-    selected_area = None
-    if areas:
-        selected_area = st.selectbox("Chọn Vùng", ["(Tất cả)"] + areas)
-        if selected_area and selected_area != "(Tất cả)":
-            sub_df = sub_df[sub_df["Vùng"] == selected_area]
-    # Chọn Tỉnh
-    provinces = sorted(sub_df["Tỉnh"].dropna().unique())
-    selected_prov = st.selectbox("Chọn Tỉnh", provinces)
-    sub_df = sub_df[sub_df["Tỉnh"] == selected_prov] if selected_prov else sub_df
-    # Chọn Bệnh viện/SYT
-    hospitals = sorted(sub_df["Bệnh viện/SYT"].dropna().unique())
-    selected_hospital = st.selectbox("Chọn Bệnh viện/Sở Y Tế", hospitals)
-    # Upload file danh mục mời thầu
-    uploaded_file = st.file_uploader("Tải lên file Danh Mục Mời Thầu (.xlsx)", type=["xlsx"])
-    if uploaded_file is not None and selected_hospital:
-        # Đọc Excel và xác định sheet chứa dữ liệu chính
-        xls = pd.ExcelFile(uploaded_file)
-        sheet_name = None
-        max_cols = 0
-        for name in xls.sheet_names:
-            try:
-                df_test = xls.parse(name, nrows=1, header=None)
-                cols = df_test.shape[1]
-            except Exception:
-                cols = 0
-            if cols > max_cols:
-                max_cols = cols
-                sheet_name = name
-        if sheet_name is None:
-            st.error("❌ Không tìm thấy sheet dữ liệu phù hợp trong file.")
-        else:
-            # Đọc toàn bộ sheet (không đặt header) để tìm dòng tiêu đề
-            df_raw = pd.read_excel(uploaded_file, sheet_name=sheet_name, header=None)
-            header_index = None
-            for i in range(10):
-                row = " ".join(df_raw.iloc[i].fillna('').astype(str).tolist())
-                if "Tên hoạt chất" in row and "Số lượng" in row:
-                    header_index = i
-                    break
-            if header_index is None:
-                st.error("❌ Không xác định được dòng tiêu đề trong file.")
-            else:
-                # Tạo DataFrame với header chính xác
-                header = df_raw.iloc[header_index].tolist()
-                df_all = df_raw.iloc[header_index+1:].reset_index(drop=True)
-                df_all.columns = header
-                # Bỏ các dòng trống hoàn toàn (nếu có)
-                df_all = df_all.dropna(how='all').reset_index(drop=True)
-                # So sánh 3 cột (hoạt chất, hàm lượng, nhóm thuốc) với danh mục công ty (file2)
-                df_all["active_norm"] = df_all["Tên hoạt chất"].apply(normalize_active)
-                df_all["conc_norm"] = df_all["Nồng độ/hàm lượng"].apply(normalize_concentration)
-                df_all["group_norm"] = df_all["Nhóm thuốc"].apply(normalize_group)
-                df_comp = file2.copy()
-                df_comp["active_norm"] = df_comp["Tên hoạt chất"].apply(normalize_active)
-                df_comp["conc_norm"] = df_comp["Nồng độ/Hàm lượng"].apply(normalize_concentration)
-                df_comp["group_norm"] = df_comp["Nhóm thuốc"].apply(normalize_group)
-                # Inner merge để giữ lại các dòng khớp với danh mục công ty
-                merged_df = pd.merge(df_all, df_comp, on=["active_norm", "conc_norm", "group_norm"], how="inner", suffixes=(None, "_comp"))
-                # Chọn các cột gốc + tên sản phẩm (brand), đồng thời gắn Địa bàn và Khách hàng phụ trách
-                result_columns = df_all.columns.tolist() + ["Tên sản phẩm"]
-                result_df = merged_df[result_columns].copy()
-                # Thêm thông tin Địa bàn, Khách hàng phụ trách từ file3
-                hosp_data = file3[file3["Bệnh viện/SYT"] == selected_hospital][["Tên sản phẩm", "Địa bàn", "Tên Khách hàng phụ trách triển khai"]]
-                result_df = pd.merge(result_df, hosp_data, on="Tên sản phẩm", how="left")
-                # Tính cột "Tỷ trọng SL/DM Tổng"
-                # Lập bảng tổng số lượng theo Nhóm điều trị cho toàn bộ danh mục thầu (df_all)
-                # Ánh xạ hoạt chất -> nhóm điều trị từ file4
-                treat_map = { normalize_active(a): grp for a, grp in zip(file4["Hoạt chất"], file4["Nhóm điều trị"]) }
-                group_total = {}
-                for _, row in df_all.iterrows():
-                    act = normalize_active(row["Tên hoạt chất"])
-                    group = treat_map.get(act)
-                    qty = pd.to_numeric(row.get("Số lượng", 0), errors='coerce')
-                    if pd.isna(qty):
-                        qty = 0
-                    if group:
-                        group_total[group] = group_total.get(group, 0) + float(qty)
-                # Tính tỷ trọng cho từng dòng kết quả
-                ratios = []
-                for _, row in result_df.iterrows():
-                    act = normalize_active(row["Tên hoạt chất"])
-                    group = treat_map.get(act)
-                    qty = pd.to_numeric(row.get("Số lượng", 0), errors='coerce')
-                    if pd.isna(qty) or group is None or group not in group_total or group_total[group] == 0:
-                        ratios.append(None)
-                    else:
-                        ratio = float(qty) / group_total[group]
-                        ratios.append(f"{ratio:.2%}")
-                result_df["Tỷ trọng SL/DM Tổng"] = ratios
-                # Hiển thị kết quả lọc và nút tải về
-                st.success(f"✅ Đã lọc được {len(result_df)} mục thuốc thuộc danh mục công ty.")
-                st.dataframe(result_df.head(10))
-                # Xuất file Excel kết quả
-                output = BytesIO()
-                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                    result_df.to_excel(writer, sheet_name="KetQuaLoc", index=False)
-                st.download_button("⬇️ Tải File Kết Quả", data=output.getvalue(), file_name="Ketqua_loc.xlsx")
-                # Lưu DataFrame đã lọc vào session_state để dùng cho phân tích
-                st.session_state["filtered_df"] = result_df
-                st.session_state["selected_hospital"] = selected_hospital
-
-# 2. Phân Tích Danh Mục Thầu
-elif option == "Phân Tích Danh Mục Thầu":
-    st.header("📊 Phân Tích Danh Mục Thầu")
-    if "filtered_df" not in st.session_state:
-        st.info("Vui lòng thực hiện bước 'Lọc Danh Mục Thầu' trước.")
+# Tab 1: Lọc danh mục mời thầu
+with tab1:
+    st.subheader("🔎 Lọc Danh Mục Thầu")
+    st.write("Hãy tải lên **danh mục mời thầu** và **danh mục sản phẩm công ty** ở thanh bên để bắt đầu lọc.")
+    if tender_file is not None and company_file is not None:
+        # Đọc dữ liệu
+        df_tender, tender_header = load_excel(tender_file)
+        df_company, comp_header = load_excel(company_file)
+        tender_cols = identify_columns(df_tender)
+        comp_cols = identify_columns(df_company)
+        # Kiểm tra cột bắt buộc
+        if not tender_cols["active"] or not tender_cols["strength"]:
+            st.error("Không tìm thấy cột *hoạt chất* và *hàm lượng* trong file mời thầu. Vui lòng kiểm tra lại file.")
+            st.stop()
+        if not comp_cols["active"] or not comp_cols["strength"]:
+            st.error("Không tìm thấy cột *hoạt chất* và *hàm lượng* trong file sản phẩm công ty. Vui lòng kiểm tra lại file.")
+            st.stop()
+        # Xác định tên cột sản phẩm trong danh mục công ty (nếu có)
+        comp_active_col = comp_cols["active"]
+        comp_strength_col = comp_cols["strength"]
+        comp_product_col = comp_cols["med_name"] if comp_cols["med_name"] else comp_active_col
+        # Tạo từ điển key -> tên sản phẩm công ty
+        company_dict = {}
+        for _, row in df_company.iterrows():
+            active_str = str(row[comp_active_col]) if pd.notna(row[comp_active_col]) else ""
+            strength_str = str(row[comp_strength_col]) if pd.notna(row[comp_strength_col]) else ""
+            key = normalize_text(active_str + strength_str)
+            if key and key not in company_dict:
+                prod_name = str(row[comp_product_col]) if pd.notna(row[comp_product_col]) else (active_str + " " + strength_str)
+                company_dict[key] = prod_name
+        # Lọc các mục thầu khớp với danh mục công ty
+        output_df = df_tender.copy()
+        match_col = "Sản phẩm_Công ty khớp"
+        output_df[match_col] = ""
+        for idx, row in df_tender.iterrows():
+            active_str = str(row[tender_cols["active"]]) if pd.notna(row[tender_cols["active"]]) else ""
+            strength_str = str(row[tender_cols["strength"]]) if pd.notna(row[tender_cols["strength"]]) else ""
+            tender_key = normalize_text(active_str + strength_str)
+            if tender_key in company_dict:
+                output_df.at[idx, match_col] = company_dict[tender_key]
+        # Hiển thị kết quả lọc (các dòng có khớp)
+        df_matched = output_df[output_df[match_col] != ""]
+        count = df_matched.shape[0]
+        st.write(f"**Kết quả:** Có {count} mặt hàng trong danh mục mời thầu khớp với danh mục sản phẩm của công ty.")
+        st.dataframe(df_matched, height=400)
+        # Nút tải file Excel kết quả
+        try:
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                output_df.to_excel(writer, index=False, sheet_name="Ket_qua_loc")
+            st.download_button(label="💾 Tải kết quả lọc (Excel)", 
+                               data=output.getvalue(), 
+                               file_name="Ketqua_loc_danhmucthau.xlsx", 
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        except Exception as e:
+            st.error(f"Xuất Excel thất bại: {e}")
     else:
-        df_filtered = st.session_state["filtered_df"].copy()
-        # Đảm bảo kiểu dữ liệu số
-        df_filtered["Số lượng"] = pd.to_numeric(df_filtered["Số lượng"], errors='coerce').fillna(0)
-        df_filtered["Giá kế hoạch"] = pd.to_numeric(df_filtered["Giá kế hoạch"], errors='coerce').fillna(0)
-        # Thêm cột trị giá = Số lượng * Giá kế hoạch
-        df_filtered["Trị giá"] = df_filtered["Số lượng"] * df_filtered["Giá kế hoạch"]
-        # Biểu đồ 1: Nhóm thầu sử dụng nhiều nhất theo trị giá
-        group_val = df_filtered.groupby("Nhóm thuốc")["Trị giá"].sum().reset_index().sort_values("Trị giá", ascending=False)
-        fig1 = px.bar(group_val, x="Nhóm thuốc", y="Trị giá", title="Trị giá theo Nhóm thầu (gói thầu)")
-        st.plotly_chart(fig1, use_container_width=True)
-        # Biểu đồ 2: Phân tích đường dùng (tiêm/uống) theo trị giá
-        # Xác định loại đường dùng cho từng mục (Tiêm, Uống hoặc Khác)
-        route_df = df_filtered.copy()
-        def classify_route(route_str):
-            route = str(route_str).lower()
-            if "tiêm" in route:
-                return "Tiêm"
-            elif "uống" in route:
-                return "Uống"
-            else:
-                return "Khác"
-        route_df["Loại đường dùng"] = route_df["Đường dùng"].apply(classify_route)
-        route_val = route_df.groupby("Loại đường dùng")["Trị giá"].sum().reset_index()
-        fig2 = px.pie(route_val, names="Loại đường dùng", values="Trị giá", title="Tỷ trọng trị giá theo đường dùng")
-        st.plotly_chart(fig2, use_container_width=True)
-        # Biểu đồ 3: Top 10 hoạt chất theo Số lượng
-        top_active_qty = df_filtered.groupby("Tên hoạt chất")["Số lượng"].sum().reset_index().sort_values("Số lượng", ascending=False).head(10)
-        fig3 = px.bar(top_active_qty, x="Tên hoạt chất", y="Số lượng", title="Top 10 Hoạt chất (theo Số lượng)")
-        st.plotly_chart(fig3, use_container_width=True)
-        # Biểu đồ 4: Top 10 hoạt chất theo Trị giá
-        top_active_val = df_filtered.groupby("Tên hoạt chất")["Trị giá"].sum().reset_index().sort_values("Trị giá", ascending=False).head(10)
-        fig4 = px.bar(top_active_val, x="Tên hoạt chất", y="Trị giá", title="Top 10 Hoạt chất (theo Trị giá)")
-        st.plotly_chart(fig4, use_container_width=True)
-        # Biểu đồ 5: Phân tích Nhóm điều trị và top 10 sản phẩm
-        # Gắn cột Nhóm điều trị cho từng mục
-        treat_map = { normalize_active(a): grp for a, grp in zip(file4["Hoạt chất"], file4["Nhóm điều trị"]) }
-        df_filtered["Nhóm điều trị"] = df_filtered["Tên hoạt chất"].apply(lambda x: treat_map.get(normalize_active(x), "Khác"))
-        # Tổng trị giá theo nhóm điều trị
-        treat_val = df_filtered.groupby("Nhóm điều trị")["Trị giá"].sum().reset_index().sort_values("Trị giá", ascending=False)
-        fig5 = px.bar(treat_val, x="Trị giá", y="Nhóm điều trị", orientation='h', title="Trị giá theo Nhóm điều trị")
-        st.plotly_chart(fig5, use_container_width=True)
-        # Chọn nhóm điều trị để xem Top 10 sản phẩm
-        groups = treat_val["Nhóm điều trị"].tolist()
-        selected_grp = st.selectbox("Chọn Nhóm điều trị để xem Top 10 sản phẩm", groups)
-        if selected_grp:
-            top_products = df_filtered[df_filtered["Nhóm điều trị"] == selected_grp].groupby("Tên sản phẩm")["Trị giá"].sum().reset_index().sort_values("Trị giá", ascending=False).head(10)
-            fig6 = px.bar(top_products, x="Trị giá", y="Tên sản phẩm", orientation='h', title=f"Top 10 sản phẩm - Nhóm {selected_grp}")
-            st.plotly_chart(fig6, use_container_width=True)
-        # Biểu đồ 6: Hiệu quả theo Tên khách hàng phụ trách triển khai (tổng trị giá theo người phụ trách)
-        rep_val = df_filtered.groupby("Tên Khách hàng phụ trách triển khai")["Trị giá"].sum().reset_index().sort_values("Trị giá", ascending=False)
-        fig7 = px.bar(rep_val, x="Trị giá", y="Tên Khách hàng phụ trách triển khai", orientation='h', title="Trị giá theo Khách hàng phụ trách")
-        st.plotly_chart(fig7, use_container_width=True)
+        st.info("🛈 Vui lòng tải **cả hai file** (danh mục mời thầu và danh mục sản phẩm công ty) để thực hiện lọc.")
 
-# 3. Phân Tích Danh Mục Trúng Thầu
-elif option == "Phân Tích Danh Mục Trúng Thầu":
-    st.header("🏆 Phân Tích Danh Mục Trúng Thầu")
-    win_file = st.file_uploader("Tải lên file Kết Quả Trúng Thầu (.xlsx)", type=["xlsx"])
-    invite_file = st.file_uploader("Tải lên file Danh Mục Mời Thầu (để đối chiếu, tùy chọn)", type=["xlsx"])
-    if win_file is not None:
-        # Xác định sheet chính của file trúng thầu
-        xls_win = pd.ExcelFile(win_file)
-        win_sheet = xls_win.sheet_names[0]
-        max_cols = 0
-        for name in xls_win.sheet_names:
-            try:
-                df_test = xls_win.parse(name, nrows=1, header=None)
-                cols = df_test.shape[1]
-            except:
-                cols = 0
-            if cols > max_cols:
-                max_cols = cols
-                win_sheet = name
-        # Đọc toàn bộ sheet và xác định dòng tiêu đề
-        df_win_raw = pd.read_excel(win_file, sheet_name=win_sheet, header=None)
-        header_idx = None
-        for i in range(10):
-            row_text = " ".join(df_win_raw.iloc[i].fillna('').astype(str).tolist())
-            if "Tên hoạt chất" in row_text and "Nhà thầu trúng" in row_text:
-                header_idx = i
-                break
-        if header_idx is None:
-            st.error("❌ Không xác định được tiêu đề cột trong file trúng thầu.")
+# Tab 2: Phân tích danh mục thầu
+with tab2:
+    st.subheader("📊 Phân Tích Danh Mục Thầu")
+    if tender_file is not None:
+        # Đảm bảo đã có df_tender
+        if 'df_tender' not in locals():
+            df_tender, tender_header = load_excel(tender_file)
+        tender_cols = identify_columns(df_tender)
+        # Xác định các cột liên quan
+        active_col = tender_cols["active"]
+        strength_col = tender_cols["strength"]
+        route_col = tender_cols["route"]
+        quantity_col = tender_cols["quantity"]
+        plan_price_col = tender_cols["plan_price"]
+        total_col = tender_cols["total_amount"]
+        # Tính cột tổng giá trị kế hoạch nếu cần
+        df_analysis = df_tender.copy()
+        if total_col and total_col in df_analysis.columns:
+            df_analysis[total_col] = pd.to_numeric(df_analysis[total_col], errors='coerce')
         else:
-            header = df_win_raw.iloc[header_idx].tolist()
-            df_win = df_win_raw.iloc[header_idx+1:].reset_index(drop=True)
-            df_win.columns = header
-            df_win = df_win.dropna(how='all').reset_index(drop=True)
-            # Chuyển kiểu số cho Số lượng và giá
-            df_win["Số lượng"] = pd.to_numeric(df_win.get("Số lượng", 0), errors='coerce').fillna(0)
-            # Xác định cột giá trúng (nếu không có thì dùng Giá kế hoạch)
-            price_col = None
-            for col in df_win.columns:
-                if "Giá trúng" in str(col):
-                    price_col = col
-                    break
-            if price_col is None:
-                price_col = "Giá kế hoạch"
-            df_win[price_col] = pd.to_numeric(df_win.get(price_col, 0), errors='coerce').fillna(0)
-            # Tính trị giá trúng thầu mỗi mục
-            df_win["Trị giá"] = df_win["Số lượng"] * df_win[price_col]
-            # Biểu đồ: Top 20 nhà thầu trúng trị giá cao nhất
-            win_val = df_win.groupby("Nhà thầu trúng")["Trị giá"].sum().reset_index().sort_values("Trị giá", ascending=False).head(20)
-            fig_w1 = px.bar(win_val, x="Trị giá", y="Nhà thầu trúng", orientation='h', title="Top 20 Nhà thầu trúng (theo trị giá)")
-            st.plotly_chart(fig_w1, use_container_width=True)
-            # Biểu đồ: Phân tích theo nhóm điều trị (cơ cấu trị giá)
-            df_win["Nhóm điều trị"] = df_win["Tên hoạt chất"].apply(lambda x: treat_map.get(normalize_active(x), "Khác"))
-            treat_win = df_win.groupby("Nhóm điều trị")["Trị giá"].sum().reset_index().sort_values("Trị giá", ascending=False)
-            fig_w2 = px.pie(treat_win, names="Nhóm điều trị", values="Trị giá", title="Cơ cấu trị giá theo Nhóm điều trị (Trúng thầu)")
-            st.plotly_chart(fig_w2, use_container_width=True)
-            # Nếu có upload danh mục mời thầu để đối chiếu
-            if invite_file is not None:
-                xls_inv = pd.ExcelFile(invite_file)
-                inv_sheet = xls_inv.sheet_names[0]
-                df_inv_raw = pd.read_excel(invite_file, sheet_name=inv_sheet, header=None)
-                header_idx2 = None
-                for i in range(10):
-                    row_text = " ".join(df_inv_raw.iloc[i].fillna('').astype(str).tolist())
-                    if "Tên hoạt chất" in row_text and "Số lượng" in row_text:
-                        header_idx2 = i
-                        break
-                if header_idx2 is not None:
-                    header2 = df_inv_raw.iloc[header_idx2].tolist()
-                    df_inv_full = df_inv_raw.iloc[header_idx2+1:].reset_index(drop=True)
-                    df_inv_full.columns = header2
-                    df_inv_full = df_inv_full.dropna(how='all').reset_index(drop=True)
-                    # So sánh các mục không trúng (có trong mời thầu nhưng không có trong trúng thầu)
-                    if "Mã phần (Lô)" in df_inv_full.columns and "Mã phần (Lô)" in df_win.columns:
-                        inv_ids = set(df_inv_full["Mã phần (Lô)"].astype(str))
-                        win_ids = set(df_win["Mã phần (Lô)"].astype(str))
-                        missing_ids = inv_ids - win_ids
-                        missing_items = df_inv_full[df_inv_full["Mã phần (Lô)"].astype(str).isin(missing_ids)]
-                    else:
-                        # Dùng kết hợp hoạt chất + hàm lượng để đối chiếu nếu không có Mã phần
-                        inv_keys = df_inv_full["Tên hoạt chất"].astype(str) + df_inv_full["Nồng độ/hàm lượng"].astype(str)
-                        win_keys = df_win["Tên hoạt chất"].astype(str) + df_win["Nồng độ/hàm lượng"].astype(str)
-                        missing_mask = ~inv_keys.isin(win_keys)
-                        missing_items = df_inv_full[missing_mask]
-                    if not missing_items.empty:
-                        st.write("**Các thuốc mời thầu không có nhà thầu trúng:**")
-                        st.dataframe(missing_items[["Tên hoạt chất", "Nồng độ/hàm lượng", "Số lượng", "Giá kế hoạch"]])
-                        st.write(f"📌 Số lượng thuốc không trúng thầu: {len(missing_items)}")
-                        # Lưu vào session_state để dùng cho đề xuất
-                        st.session_state["missing_items"] = missing_items
-                    else:
-                        st.write("✅ Tất cả thuốc mời thầu đều đã có nhà thầu trúng.")
-
-# 4. Đề Xuất Hướng Triển Khai
-elif option == "Đề Xuất Hướng Triển Khai":
-    st.header("💡 Đề Xuất Hướng Triển Khai")
-    if "filtered_df" not in st.session_state:
-        st.info("Vui lòng thực hiện phân tích trước để có dữ liệu.")
+            if plan_price_col and quantity_col:
+                df_analysis[plan_price_col] = pd.to_numeric(df_analysis[plan_price_col], errors='coerce')
+                df_analysis[quantity_col] = pd.to_numeric(df_analysis[quantity_col], errors='coerce')
+                df_analysis["TongGiaKeHoach"] = df_analysis[plan_price_col] * df_analysis[quantity_col]
+                total_col = "TongGiaKeHoach"
+            else:
+                total_col = None
+        if quantity_col:
+            df_analysis[quantity_col] = pd.to_numeric(df_analysis[quantity_col], errors='coerce')
+        # Biểu đồ Top 10 hoạt chất theo đường dùng (tiêm/uống)
+        if active_col and route_col and total_col:
+            # Tách dữ liệu theo đường dùng
+            df_inj = df_analysis[df_analysis[route_col].astype(str).str.contains("tiêm", case=False, na=False)]
+            df_oral = df_analysis[df_analysis[route_col].astype(str).str.contains("uống", case=False, na=False)]
+            # Nhóm theo hoạt chất (lowercase để nhóm chính xác)
+            if not df_inj.empty:
+                df_inj_group = df_inj.copy()
+                df_inj_group['active_lower'] = df_inj_group[active_col].astype(str).str.lower()
+                df_inj_group = df_inj_group.groupby('active_lower').agg({total_col: 'sum', quantity_col: 'sum', active_col: 'first'}).reset_index(drop=True)
+                df_inj_top = df_inj_group.sort_values(total_col, ascending=False).head(10)
+                # Nhãn hoạt chất (viết hoa chữ cái đầu cho đẹp)
+                df_inj_top[active_col] = df_inj_top[active_col].str.title()
+                # Tạo cột text hiển thị cả giá trị và số lượng
+                df_inj_top["text"] = df_inj_top.apply(lambda r: f"{format_number(r[total_col])} ({format_number(r[quantity_col])})", axis=1)
+                fig_inj = px.bar(df_inj_top, x=active_col, y=total_col, text="text", title="Top 10 hoạt chất (đường tiêm)")
+                fig_inj.update_traces(textposition='outside')
+                fig_inj.update_yaxes(title="Tổng giá trị kế hoạch (VND)")
+                fig_inj.update_xaxes(title="Hoạt chất (đường tiêm)")
+                st.plotly_chart(fig_inj, use_container_width=True)
+            if not df_oral.empty:
+                df_oral_group = df_oral.copy()
+                df_oral_group['active_lower'] = df_oral_group[active_col].astype(str).str.lower()
+                df_oral_group = df_oral_group.groupby('active_lower').agg({total_col: 'sum', quantity_col: 'sum', active_col: 'first'}).reset_index(drop=True)
+                df_oral_top = df_oral_group.sort_values(total_col, ascending=False).head(10)
+                df_oral_top[active_col] = df_oral_top[active_col].str.title()
+                df_oral_top["text"] = df_oral_top.apply(lambda r: f"{format_number(r[total_col])} ({format_number(r[quantity_col])})", axis=1)
+                fig_oral = px.bar(df_oral_top, x=active_col, y=total_col, text="text", title="Top 10 hoạt chất (đường uống)")
+                fig_oral.update_traces(textposition='outside')
+                fig_oral.update_yaxes(title="Tổng giá trị kế hoạch (VND)")
+                fig_oral.update_xaxes(title="Hoạt chất (đường uống)")
+                st.plotly_chart(fig_oral, use_container_width=True)
+        else:
+            st.warning("Không đủ dữ liệu để thống kê Top 10 hoạt chất (thiếu cột hoạt chất, đường dùng hoặc giá trị).")
+        # Biểu đồ phân tích theo khách hàng phụ trách (nếu có dữ liệu)
+        if assign_file is not None or tender_cols["customer"]:
+            if assign_file is not None:
+                df_assign, assign_header = load_excel(assign_file)
+            else:
+                df_assign = df_analysis  # trường hợp cột KH phụ trách nằm ngay trong df_tender
+            assign_cols = identify_columns(df_assign)
+            customer_col = assign_cols["customer"]
+            product_col = assign_cols["med_name"] or assign_cols["active"]
+            if customer_col:
+                # Nếu file phân công có cột đơn vị (BV/SYT), cố gắng lọc theo đơn vị của gói thầu hiện tại
+                if assign_cols["hospital"] and tender_cols["hospital"]:
+                    hosp_name = str(df_analysis[tender_cols["hospital"]].iloc[0]) if tender_cols["hospital"] else ""
+                    if hosp_name:
+                        df_assign = df_assign[df_assign[assign_cols["hospital"]].astype(str).str.contains(hosp_name, case=False, na=False)]
+                # Gộp thông tin khách hàng phụ trách vào danh mục thầu theo tên sản phẩm
+                df_merge = df_analysis.copy()
+                if product_col in df_merge.columns and product_col in df_assign.columns:
+                    # nối theo tên sản phẩm/thuốc
+                    df_merge = df_merge.merge(df_assign[[product_col, customer_col]], on=product_col, how='left')
+                elif tender_cols["active"] and assign_cols["active"] and assign_cols["strength"]:
+                    # nếu không có cột tên sản phẩm chung, thử nối theo hoạt chất+hàm lượng (không chắc nhưng thử)
+                    df_assign["key"] = df_assign[assign_cols["active"]].astype(str).str.lower() + df_assign[assign_cols["strength"]].astype(str).str.lower()
+                    df_merge["key"] = df_merge[tender_cols["active"]].astype(str).str.lower() + df_merge[tender_cols["strength"]].astype(str).str.lower()
+                    df_merge = df_merge.merge(df_assign[["key", customer_col]], on="key", how="left")
+                # Nhóm theo khách hàng và tính tổng
+                df_merge[total_col] = pd.to_numeric(df_merge[total_col], errors='coerce')
+                if quantity_col:
+                    df_merge[quantity_col] = pd.to_numeric(df_merge[quantity_col], errors='coerce')
+                df_by_cust = df_merge.groupby(customer_col).agg({total_col: 'sum', quantity_col: 'sum'}).reset_index()
+                df_by_cust = df_by_cust.dropna(subset=[customer_col])
+                if df_by_cust.empty:
+                    st.info("Không có dữ liệu phân công phù hợp để phân tích theo khách hàng.")
+                else:
+                    df_by_cust = df_by_cust.sort_values(total_col, ascending=False)
+                    df_by_cust["Tổng trị giá (VND)"] = df_by_cust[total_col]
+                    df_by_cust["Tổng số lượng"] = df_by_cust[quantity_col]
+                    df_cust_melt = df_by_cust.melt(id_vars=customer_col, value_vars=["Tổng trị giá (VND)", "Tổng số lượng"], 
+                                                   var_name="Chỉ tiêu", value_name="Giá trị")
+                    fig_cust = px.bar(df_cust_melt, x=customer_col, y="Giá trị", color="Chỉ tiêu", barmode="group",
+                                      title="Phân tích theo khách hàng phụ trách")
+                    fig_cust.update_traces(text=df_cust_melt["Giá trị"].apply(format_number), textposition='outside')
+                    fig_cust.update_xaxes(title="Khách hàng phụ trách")
+                    fig_cust.update_yaxes(title=None)
+                    st.plotly_chart(fig_cust, use_container_width=True)
+            else:
+                st.warning("File phân công không có thông tin khách hàng phụ trách phù hợp.")
+        else:
+            st.info("🛈 Có thể tải file phân công khách hàng (nếu có) để xem thống kê theo người phụ trách.")
+        # Tra cứu hoạt chất
+        st.markdown("---")
+        st.subheader("🔍 Tra cứu hoạt chất trong danh mục")
+        query = st.text_input("Nhập tên hoạt chất hoặc từ khóa:")
+        if query:
+            if active_col:
+                result_df = df_analysis[df_analysis[active_col].astype(str).str.lower().str.contains(query.strip().lower())]
+                if result_df.empty:
+                    st.write("Không tìm thấy hoạt chất phù hợp.")
+                else:
+                    cols_to_show = []
+                    for col_key in ["active", "strength", "dosage_form", "route", "drug_group", "plan_price", "total_amount", "unit"]:
+                        if tender_cols[col_key]:
+                            cols_to_show.append(tender_cols[col_key])
+                    cols_to_show = list(dict.fromkeys(cols_to_show))  # loại bỏ trùng lặp nếu có
+                    st.dataframe(result_df[cols_to_show].reset_index(drop=True))
+            else:
+                st.warning("Không xác định được cột hoạt chất để tra cứu trong danh mục.")
     else:
-        df_filtered = st.session_state["filtered_df"]
-        hospital = st.session_state.get("selected_hospital", "")
-        # Danh sách đề xuất
-        suggestions_yes = []  # nên triển khai
-        suggestions_no = []   # không nên triển khai
-        # 1. Các sản phẩm trong danh mục công ty tại bệnh viện nhưng chưa có trong danh mục mời thầu
-        hosp_products = set(file3[file3["Bệnh viện/SYT"] == hospital]["Tên sản phẩm"])
-        included_products = set(df_filtered["Tên sản phẩm"])
-        not_included = hosp_products - included_products
-        # Xác định nhóm bệnh viện tương tự (cùng Miền, cùng loại SYT hoặc BV)
-        hosp_info = file3[file3["Bệnh viện/SYT"] == hospital].iloc[0] if not file3[file3["Bệnh viện/SYT"] == hospital].empty else None
-        similar_df = file3.copy()
-        if hosp_info is not None:
-            if "SYT" in hospital:
-                # các Sở Y Tế khác trong cùng Miền
-                similar_df = similar_df[similar_df["Bệnh viện/SYT"].str.contains("SYT") & (similar_df["Miền"] == hosp_info["Miền"])]
-            else:
-                # các Bệnh viện khác (không phải SYT) trong cùng Miền
-                similar_df = similar_df[~similar_df["Bệnh viện/SYT"].str.contains("SYT") & (similar_df["Miền"] == hosp_info["Miền"])]
-        for prod in not_included:
-            if prod in set(similar_df["Tên sản phẩm"]):
-                suggestions_yes.append(f"- Nên triển khai **{prod}**: Sản phẩm chưa có trong thầu của {hospital}, nhưng nhiều đơn vị tương tự đã có nhu cầu.")
-            else:
-                suggestions_no.append(f"- Chưa cần triển khai **{prod}**: Sản phẩm chưa có trong thầu {hospital} và chưa phổ biến ở nhóm bệnh viện tương tự.")
-        # 2. Các sản phẩm mời thầu nhưng không có nhà thầu trúng (nếu có)
-        if "missing_items" in st.session_state:
-            missing_items = st.session_state["missing_items"]
-            for _, row in missing_items.iterrows():
-                suggestions_yes.append(f"- Thử triển khai **{row['Tên hoạt chất']}**: Thuốc được mời thầu {hospital} nhưng chưa có nhà thầu trúng, có thể là cơ hội đưa sản phẩm vào.")
-        # 3. Các sản phẩm có đối thủ trúng thầu (công ty chưa trúng)
-        # Giả sử công ty theo dõi các sản phẩm đã được đưa vào thầu (df_filtered), nếu không trúng thầu có thể cân nhắc mức độ ưu tiên
-        if "missing_items" in st.session_state or "filtered_df" in st.session_state:
-            # Nếu một sản phẩm có mặt trong danh mục mời thầu (của công ty) nhưng công ty không trúng -> đối thủ đã trúng
-            # (Đơn giản coi như mọi mục trong df_filtered là công ty có tham gia, nếu không nằm trong missing_items tức là có người trúng)
-            if "missing_items" in st.session_state:
-                lost_df = df_filtered.copy()
-                for _, miss in st.session_state["missing_items"].iterrows():
-                    # loại các mục không ai trúng (đã xử lý ở trên)
-                    lost_df = lost_df[~((lost_df["Tên hoạt chất"] == miss["Tên hoạt chất"]) & (lost_df["Nồng độ/hàm lượng"] == miss["Nồng độ/hàm lượng"]))]
-            else:
-                lost_df = df_filtered
-            # Tất cả mục còn lại trong lost_df coi như có đối thủ trúng
-            for _, row in lost_df.iterrows():
-                suggestions_no.append(f"- Hạn chế tập trung **{row['Tên hoạt chất']}**: Đã có đối thủ trúng thầu tại {hospital}, cần cân nhắc nếu không có lợi thế cạnh tranh.")
-        # Hiển thị đề xuất
-        st.subheader("🔸 Đề xuất nên triển khai")
-        if suggestions_yes:
-            st.markdown("\n".join(suggestions_yes))
+        st.info("Vui lòng tải file danh mục mời thầu ở thanh bên để xem phân tích.")
+
+# Tab 3: Phân tích danh mục trúng thầu
+with tab3:
+    st.subheader("🏆 Phân Tích Danh Mục Trúng Thầu")
+    if awarded_file is not None:
+        df_award, award_header = load_excel(awarded_file)
+        award_cols = identify_columns(df_award)
+        active_col = award_cols["active"]
+        if not active_col:
+            st.error("Không tìm thấy cột hoạt chất trong file trúng thầu (tiêu đề có thể khác, vui lòng kiểm tra).")
+            st.stop()
+        quantity_col = award_cols["quantity"]
+        award_price_col = award_cols["award_price"]
+        total_col = award_cols["total_amount"]
+        # Tính thành tiền nếu chưa có
+        if total_col:
+            df_award[total_col] = pd.to_numeric(df_award[total_col], errors='coerce')
+        elif quantity_col and award_price_col:
+            df_award[award_price_col] = pd.to_numeric(df_award[award_price_col], errors='coerce')
+            df_award[quantity_col] = pd.to_numeric(df_award[quantity_col], errors='coerce')
+            df_award["ThanhTien_TinhToan"] = df_award[award_price_col] * df_award[quantity_col]
+            total_col = "ThanhTien_TinhToan"
+        # Bộ lọc vùng miền
+        df_filtered = df_award.copy()
+        region_col = award_cols["region"]; zone_col = award_cols["zone"]
+        province_col = award_cols["province"]; hospital_col = award_cols["hospital"]
+        if region_col:
+            regions = ["Tất cả"] + sorted(df_award[region_col].dropna().unique().tolist())
+            sel_region = st.selectbox("Chọn Miền:", regions)
+            if sel_region and sel_region != "Tất cả":
+                df_filtered = df_filtered[df_filtered[region_col] == sel_region]
+        if zone_col:
+            zones = ["Tất cả"] + sorted(df_filtered[zone_col].dropna().unique().tolist())
+            sel_zone = st.selectbox("Chọn Vùng:", zones)
+            if sel_zone and sel_zone != "Tất cả":
+                df_filtered = df_filtered[df_filtered[zone_col] == sel_zone]
+        if province_col:
+            provinces = ["Tất cả"] + sorted(df_filtered[province_col].dropna().unique().tolist())
+            sel_prov = st.selectbox("Chọn Tỉnh:", provinces)
+            if sel_prov and sel_prov != "Tất cả":
+                df_filtered = df_filtered[df_filtered[province_col] == sel_prov]
+        if hospital_col:
+            hospitals = ["Tất cả"] + sorted(df_filtered[hospital_col].dropna().unique().tolist())
+            sel_hosp = st.selectbox("Chọn Bệnh viện/SYT:", hospitals)
+            if sel_hosp and sel_hosp != "Tất cả":
+                df_filtered = df_filtered[df_filtered[hospital_col] == sel_hosp]
+        st.write(f"**Số mặt hàng:** {df_filtered.shape[0]}")
+        st.dataframe(df_filtered.head(50))
+        # Biểu đồ top 10 hoạt chất theo giá trị trúng thầu (trong phạm vi đã lọc)
+        if total_col:
+            df_group = df_filtered.copy()
+            df_group['active_lower'] = df_group[active_col].astype(str).str.lower()
+            df_group = df_group.groupby('active_lower').agg({total_col: 'sum', active_col: 'first'}).reset_index(drop=True)
+            df_top10 = df_group.sort_values(total_col, ascending=False).head(10)
+            df_top10[active_col] = df_top10[active_col].str.title()
+            fig_top10 = px.bar(df_top10, x=active_col, y=total_col, 
+                                text=df_top10[total_col].apply(format_number),
+                                title="Top 10 hoạt chất trúng thầu (giá trị)")
+            fig_top10.update_traces(textposition='outside')
+            fig_top10.update_xaxes(title="Hoạt chất")
+            fig_top10.update_yaxes(title="Tổng trị giá trúng thầu (VND)")
+            st.plotly_chart(fig_top10, use_container_width=True)
         else:
-            st.write("Không có sản phẩm mới nào cần triển khai thêm tại thời điểm này.")
-        st.subheader("🔹 Đề xuất không nên triển khai")
-        if suggestions_no:
-            st.markdown("\n".join(suggestions_no))
-        else:
-            st.write("Không có sản phẩm nào cần ngừng triển khai; tiếp tục duy trì các danh mục hiện có.")
+            st.info("Không có dữ liệu thành tiền để thống kê.")
+    else:
+        st.info("🛈 Vui lòng tải file danh mục trúng thầu để xem phân tích.")
