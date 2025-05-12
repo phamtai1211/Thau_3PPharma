@@ -250,6 +250,39 @@ if "filtered_df" in st.session_state:
     df_ratio["Tỷ trọng"] = (df_ratio["Số lượng"] / df_ratio["Tổng SL"] * 100).round(2)
     st.subheader("📊 Tỷ trọng Số lượng theo Nhóm thầu")
     st.dataframe(df_ratio, height=400)
+
+# --- Đề xuất cơ số thầu tới & khách hàng triển khai ---
+if "filtered_df" in st.session_state and "file3_filtered" in st.session_state:
+    df_filtered = st.session_state["filtered_df"]
+    file3_filtered = st.session_state["file3_filtered"]
+
+    st.subheader("📦 Đề xuất cơ số thầu tới & KH triển khai")
+
+    # Tổng hợp Số lượng theo Tên hoạt chất + Nhóm thuốc
+    df_summary = df_filtered.groupby(["Tên hoạt chất", "Nhóm thuốc"])["Số lượng"].sum().reset_index()
+
+    # Nếu nhóm khác >30% >50% tổng SL thì đề xuất tăng cơ số nhóm thấp
+    suggestions = []
+    for active in df_summary["Tên hoạt chất"].unique():
+        df_sub = df_summary[df_summary["Tên hoạt chất"] == active]
+        total_qty = df_sub["Số lượng"].sum()
+        df_sub["Tỷ trọng"] = df_sub["Số lượng"] / total_qty * 100
+
+        nhom_max = df_sub.loc[df_sub["Tỷ trọng"].idxmax()]
+        if nhom_max["Tỷ trọng"] >= 50:
+            for _, row in df_sub.iterrows():
+                if row["Nhóm thuốc"] != nhom_max["Nhóm thuốc"]:
+                    suggestions.append(f"- **{active} Nhóm {row['Nhóm thuốc']}** đang thấp ({row['Tỷ trọng']:.2f}%), nên tăng cơ số ở thầu tới.")
+
+    if suggestions:
+        st.markdown("\n".join(suggestions))
+    else:
+        st.write("Không có nhóm nào cần đề xuất tăng cơ số.")
+
+    # Hiển thị Khách hàng phụ trách từ file3_filtered
+    st.subheader("👥 Khách hàng phụ trách triển khai")
+    kh_df = file3_filtered[["Tên sản phẩm", "Tên Khách hàng phụ trách triển khai"]].drop_duplicates()
+    st.dataframe(kh_df, height=300)
 elif option == "Phân Tích Danh Mục Trúng Thầu":
     st.header("🏆 Phân Tích Danh Mục Trúng Thầu")
     win_file = st.file_uploader("Tải lên file Kết Quả Trúng Thầu (.xlsx)", type=["xlsx"])
