@@ -27,6 +27,11 @@ def load_default_data():
     file2 = pd.read_excel(BytesIO(requests.get(url_file2).content))
     file3 = pd.read_excel(BytesIO(requests.get(url_file3).content))
     file4 = pd.read_excel(BytesIO(requests.get(url_file4).content))
+
+# --- Giao Thầu Logic: Bỏ qua sản phẩm Tạm ngưng hoặc không có địa bàn ---
+file3_filtered = file3[~file3["Địa bàn"].astype(str).str.contains("tạm ngưng triển khai|ko có địa bàn", case=False, na=False)]
+# Cập nhật file3 dùng cho phân tích
+st.session_state["file3_filtered"] = file3_filtered
     return file2, file3, file4
 
 file2, file3, file4 = load_default_data()
@@ -234,6 +239,17 @@ elif option == "Phân Tích Danh Mục Thầu":
         fig1.update_traces(texttemplate='%{y:.2s}', textposition='outside')        st.plotly_chart(fig7, use_container_width=True)
 
 # 3. Phân Tích Danh Mục Trúng Thầu
+
+# --- Phân tích giao thầu nhóm khác >30% >50% ---
+if "filtered_df" in st.session_state:
+    df_filtered = st.session_state["filtered_df"]
+    df_filtered["Số lượng"] = pd.to_numeric(df_filtered["Số lượng"], errors='coerce').fillna(0)
+    nhom_thau_summary = df_filtered.groupby(["Tên hoạt chất", "Nhóm thuốc"])["Số lượng"].sum().reset_index()
+    nhom_thau_total = nhom_thau_summary.groupby("Tên hoạt chất")["Số lượng"].sum().reset_index().rename(columns={"Số lượng": "Tổng SL"})
+    df_ratio = pd.merge(nhom_thau_summary, nhom_thau_total, on="Tên hoạt chất")
+    df_ratio["Tỷ trọng"] = (df_ratio["Số lượng"] / df_ratio["Tổng SL"] * 100).round(2)
+    st.subheader("📊 Tỷ trọng Số lượng theo Nhóm thầu")
+    st.dataframe(df_ratio, height=400)
 elif option == "Phân Tích Danh Mục Trúng Thầu":
     st.header("🏆 Phân Tích Danh Mục Trúng Thầu")
     win_file = st.file_uploader("Tải lên file Kết Quả Trúng Thầu (.xlsx)", type=["xlsx"])
