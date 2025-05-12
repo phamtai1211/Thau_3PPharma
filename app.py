@@ -189,8 +189,7 @@ elif option == "Phân Tích Danh Mục Thầu":
         # Biểu đồ 1: Nhóm thầu sử dụng nhiều nhất theo trị giá
         group_val = df_filtered.groupby("Nhóm thuốc")["Trị giá"].sum().reset_index().sort_values("Trị giá", ascending=False)
         fig1 = px.bar(group_val, x="Nhóm thuốc", y="Trị giá", title="Trị giá theo Nhóm thầu (gói thầu)")
-        fig1.update_traces(texttemplate='%{y:.2s}', textposition='outside')
-        st.plotly_chart(fig1, use_container_width=True)
+        fig1.update_traces(texttemplate='%{y:.2s}', textposition='outside')        st.plotly_chart(fig1, use_container_width=True)
         # Biểu đồ 2: Phân tích đường dùng (tiêm/uống) theo trị giá
         # Xác định loại đường dùng cho từng mục (Tiêm, Uống hoặc Khác)
         route_df = df_filtered.copy()
