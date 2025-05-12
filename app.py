@@ -2,6 +2,17 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import re
+
+import unicodedata
+
+def remove_accents(input_str):
+    nfkd_form = unicodedata.normalize('NFKD', input_str)
+    return ''.join([c for c in nfkd_form if not unicodedata.combining(c)])
+
+def normalize_column_name(name: str) -> str:
+    name = remove_accents(str(name)).lower().strip()
+    name = re.sub(r'\s+', ' ', name)
+    return name
 import requests
 from io import BytesIO
 import plotly.express as px
@@ -119,7 +130,7 @@ if option == "Lọc Danh Mục Thầu":
                 df_comp["conc_norm"] = df_comp["Nồng độ/Hàm lượng"].apply(normalize_concentration)
                 df_comp["group_norm"] = df_comp["Nhóm thuốc"].apply(normalize_group)
                 # Inner merge để giữ lại các dòng khớp với danh mục công ty
-                merged_df = pd.merge(df_all, df_comp, on=["active_norm", "conc_norm", "group_norm"], how="inner", suffixes=(None, "_comp"))
+                merged_df = pd.merge(df_all, df_comp, on=["active_norm", "conc_norm", "group_norm"], how="left", suffixes=(None, "_comp"))
                 # Chọn các cột gốc + tên sản phẩm (brand), đồng thời gắn Địa bàn và Khách hàng phụ trách
                 result_columns = df_all.columns.tolist() + ["Tên sản phẩm"]
                 result_df = merged_df[result_columns].copy()
@@ -153,7 +164,7 @@ if option == "Lọc Danh Mục Thầu":
                 result_df["Tỷ trọng SL/DM Tổng"] = ratios
                 # Hiển thị kết quả lọc và nút tải về
                 st.success(f"✅ Đã lọc được {len(result_df)} mục thuốc thuộc danh mục công ty.")
-                st.dataframe(result_df.head(10))
+                st.dataframe(result_df, height=500)
                 # Xuất file Excel kết quả
                 output = BytesIO()
                 with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -178,7 +189,7 @@ elif option == "Phân Tích Danh Mục Thầu":
         # Biểu đồ 1: Nhóm thầu sử dụng nhiều nhất theo trị giá
         group_val = df_filtered.groupby("Nhóm thuốc")["Trị giá"].sum().reset_index().sort_values("Trị giá", ascending=False)
         fig1 = px.bar(group_val, x="Nhóm thuốc", y="Trị giá", title="Trị giá theo Nhóm thầu (gói thầu)")
-        st.plotly_chart(fig1, use_container_width=True)
+        fig1.update_traces(texttemplate='%{y:.2s}', textposition='outside')        st.plotly_chart(fig1, use_container_width=True)
         # Biểu đồ 2: Phân tích đường dùng (tiêm/uống) theo trị giá
         # Xác định loại đường dùng cho từng mục (Tiêm, Uống hoặc Khác)
         route_df = df_filtered.copy()
@@ -197,11 +208,11 @@ elif option == "Phân Tích Danh Mục Thầu":
         # Biểu đồ 3: Top 10 hoạt chất theo Số lượng
         top_active_qty = df_filtered.groupby("Tên hoạt chất")["Số lượng"].sum().reset_index().sort_values("Số lượng", ascending=False).head(10)
         fig3 = px.bar(top_active_qty, x="Tên hoạt chất", y="Số lượng", title="Top 10 Hoạt chất (theo Số lượng)")
-        st.plotly_chart(fig3, use_container_width=True)
+        fig1.update_traces(texttemplate='%{y:.2s}', textposition='outside')        st.plotly_chart(fig3, use_container_width=True)
         # Biểu đồ 4: Top 10 hoạt chất theo Trị giá
         top_active_val = df_filtered.groupby("Tên hoạt chất")["Trị giá"].sum().reset_index().sort_values("Trị giá", ascending=False).head(10)
         fig4 = px.bar(top_active_val, x="Tên hoạt chất", y="Trị giá", title="Top 10 Hoạt chất (theo Trị giá)")
-        st.plotly_chart(fig4, use_container_width=True)
+        fig1.update_traces(texttemplate='%{y:.2s}', textposition='outside')        st.plotly_chart(fig4, use_container_width=True)
         # Biểu đồ 5: Phân tích Nhóm điều trị và top 10 sản phẩm
         # Gắn cột Nhóm điều trị cho từng mục
         treat_map = { normalize_active(a): grp for a, grp in zip(file4["Hoạt chất"], file4["Nhóm điều trị"]) }
@@ -209,18 +220,18 @@ elif option == "Phân Tích Danh Mục Thầu":
         # Tổng trị giá theo nhóm điều trị
         treat_val = df_filtered.groupby("Nhóm điều trị")["Trị giá"].sum().reset_index().sort_values("Trị giá", ascending=False)
         fig5 = px.bar(treat_val, x="Trị giá", y="Nhóm điều trị", orientation='h', title="Trị giá theo Nhóm điều trị")
-        st.plotly_chart(fig5, use_container_width=True)
+        fig1.update_traces(texttemplate='%{y:.2s}', textposition='outside')        st.plotly_chart(fig5, use_container_width=True)
         # Chọn nhóm điều trị để xem Top 10 sản phẩm
         groups = treat_val["Nhóm điều trị"].tolist()
         selected_grp = st.selectbox("Chọn Nhóm điều trị để xem Top 10 sản phẩm", groups)
         if selected_grp:
             top_products = df_filtered[df_filtered["Nhóm điều trị"] == selected_grp].groupby("Tên sản phẩm")["Trị giá"].sum().reset_index().sort_values("Trị giá", ascending=False).head(10)
             fig6 = px.bar(top_products, x="Trị giá", y="Tên sản phẩm", orientation='h', title=f"Top 10 sản phẩm - Nhóm {selected_grp}")
-            st.plotly_chart(fig6, use_container_width=True)
+        fig1.update_traces(texttemplate='%{y:.2s}', textposition='outside')            st.plotly_chart(fig6, use_container_width=True)
         # Biểu đồ 6: Hiệu quả theo Tên khách hàng phụ trách triển khai (tổng trị giá theo người phụ trách)
         rep_val = df_filtered.groupby("Tên Khách hàng phụ trách triển khai")["Trị giá"].sum().reset_index().sort_values("Trị giá", ascending=False)
         fig7 = px.bar(rep_val, x="Trị giá", y="Tên Khách hàng phụ trách triển khai", orientation='h', title="Trị giá theo Khách hàng phụ trách")
-        st.plotly_chart(fig7, use_container_width=True)
+        fig1.update_traces(texttemplate='%{y:.2s}', textposition='outside')        st.plotly_chart(fig7, use_container_width=True)
 
 # 3. Phân Tích Danh Mục Trúng Thầu
 elif option == "Phân Tích Danh Mục Trúng Thầu":
@@ -272,7 +283,7 @@ elif option == "Phân Tích Danh Mục Trúng Thầu":
             # Biểu đồ: Top 20 nhà thầu trúng trị giá cao nhất
             win_val = df_win.groupby("Nhà thầu trúng")["Trị giá"].sum().reset_index().sort_values("Trị giá", ascending=False).head(20)
             fig_w1 = px.bar(win_val, x="Trị giá", y="Nhà thầu trúng", orientation='h', title="Top 20 Nhà thầu trúng (theo trị giá)")
-            st.plotly_chart(fig_w1, use_container_width=True)
+        fig1.update_traces(texttemplate='%{y:.2s}', textposition='outside')            st.plotly_chart(fig_w1, use_container_width=True)
             # Biểu đồ: Phân tích theo nhóm điều trị (cơ cấu trị giá)
             df_win["Nhóm điều trị"] = df_win["Tên hoạt chất"].apply(lambda x: treat_map.get(normalize_active(x), "Khác"))
             treat_win = df_win.groupby("Nhóm điều trị")["Trị giá"].sum().reset_index().sort_values("Trị giá", ascending=False)
@@ -376,3 +387,13 @@ elif option == "Đề Xuất Hướng Triển Khai":
             st.markdown("\n".join(suggestions_no))
         else:
             st.write("Không có sản phẩm nào cần ngừng triển khai; tiếp tục duy trì các danh mục hiện có.")
+
+elif option == "Tra Cuu Hoat Chat":
+    st.header("🔍 Tra Cứu Hoạt Chất")
+    search_term = st.text_input("Nhập tên hoạt chất để tra cứu")
+    if search_term:
+        matched = file4[file4["Hoạt chất"].str.contains(search_term, case=False, na=False)]
+        if matched.empty:
+            st.warning("Không tìm thấy hoạt chất phù hợp.")
+        else:
+            st.dataframe(matched)
