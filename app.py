@@ -26,10 +26,6 @@ def load_default_data():
 
     file2 = pd.read_excel(BytesIO(requests.get(url_file2).content))
     file3 = pd.read_excel(BytesIO(requests.get(url_file3).content))
-
-# --- Giao Thầu Logic: Lọc sản phẩm Tạm ngưng hoặc không có địa bàn ---
-file3_filtered = file3[~file3["Địa bàn"].astype(str).str.contains("tạm ngưng triển khai|ko có địa bàn", case=False, na=False)]
-st.session_state["file3_filtered"] = file3_filtered
     file4 = pd.read_excel(BytesIO(requests.get(url_file4).content))
 
 # --- Giao Thầu Logic: Bỏ qua sản phẩm Tạm ngưng hoặc không có địa bàn ---
@@ -39,6 +35,10 @@ st.session_state["file3_filtered"] = file3_filtered
     return file2, file3, file4
 
 file2, file3, file4 = load_default_data()
+
+# --- Giao Thầu Logic: Lọc sản phẩm Tạm ngưng hoặc không có địa bàn ---
+file3_filtered = file3[~file3["Địa bàn"].astype(str).str.contains("tạm ngưng triển khai|ko có địa bàn", case=False, na=False)]
+st.session_state["file3_filtered"] = file3_filtered
 
 # Hàm tiện ích chuẩn hóa chuỗi để so sánh (không phân biệt hoa thường, khoảng trắng, ký tự đặc biệt)
 def normalize_active(name: str) -> str:
