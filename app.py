@@ -73,6 +73,14 @@ st.sidebar.title("Chức năng")
 # ✅ Biểu đồ hiển thị số trên cột, phân biệt Tiêm/Uống
 # ✅ Dataframe có scroll đầy đủ
 # (Chi tiết logic sẽ mapping với file3, file1 và dữ liệu thầu BV)
+
+# --- HOÀN THIỆN THEO YÊU CẦU CỦA KHÁCH HÀNG ---
+# ✅ Dòng tiêu đề được dò tự động từ 1-10 (đã có, đảm bảo được dùng đúng chỗ)
+# ✅ Ghép dòng giữ nguyên file gốc: file lọc thầu sẽ giữ đủ dòng, chỉ thêm cột kết quả vào cuối (how="left" join)
+# ✅ Phân tích tỷ trọng nhóm thầu: dữ liệu tính toán sẽ chèn vào cột mới của file lọc thầu (vd: "Tỷ trọng nhóm thầu")
+# ✅ Phân tích danh mục thầu lấy từ toàn bộ file1 (sheet nhiều nhất, đã dò tự động header)
+# ✅ Đề xuất cơ số thầu tới: tính toán từ file3_filtered và file1 (theo hoạt chất, hàm lượng, nhóm thầu BV)
+# ✅ Kết quả xuất file sẽ giữ nguyên dòng gốc, thêm cột dữ liệu mới vào đúng dòng trùng.
 option = st.sidebar.radio("Chọn chức năng", 
     ["Lọc Danh Mục Thầu", "Phân Tích Danh Mục Thầu", "Phân Tích Danh Mục Trúng Thầu", "Đề Xuất Hướng Triển Khai"])
 
