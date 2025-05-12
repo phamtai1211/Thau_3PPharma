@@ -26,6 +26,10 @@ def load_default_data():
 
     file2 = pd.read_excel(BytesIO(requests.get(url_file2).content))
     file3 = pd.read_excel(BytesIO(requests.get(url_file3).content))
+
+# --- Giao Thầu Logic: Lọc sản phẩm Tạm ngưng hoặc không có địa bàn ---
+file3_filtered = file3[~file3["Địa bàn"].astype(str).str.contains("tạm ngưng triển khai|ko có địa bàn", case=False, na=False)]
+st.session_state["file3_filtered"] = file3_filtered
     file4 = pd.read_excel(BytesIO(requests.get(url_file4).content))
 
 # --- Giao Thầu Logic: Bỏ qua sản phẩm Tạm ngưng hoặc không có địa bàn ---
