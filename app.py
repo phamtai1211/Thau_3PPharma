@@ -3,16 +3,14 @@ import pandas as pd
 import numpy as np
 import re
 
-import unicodedata
-
-def remove_accents(input_str):
-    nfkd_form = unicodedata.normalize('NFKD', input_str)
-    return ''.join([c for c in nfkd_form if not unicodedata.combining(c)])
-
-def normalize_column_name(name: str) -> str:
-    name = remove_accents(str(name)).lower().strip()
-    name = re.sub(r'\s+', ' ', name)
-    return name
+# --- Dò dòng tiêu đề từ dòng 1-10 ---
+def find_header_row(df):
+    for i in range(10):
+        row = df.iloc[i].astype(str).str.lower().str.strip()
+        if "hoạt chất" in "".join(row) or "tên thành phần" in "".join(row):
+            return i
+    st.error("❌ Không xác định được dòng tiêu đề trong file.")
+    st.stop()
 import requests
 from io import BytesIO
 import plotly.express as px
@@ -31,7 +29,7 @@ def load_default_data():
 
 file2, file3, file4 = load_default_data()
 
-# --- Lọc file3 sau khi load xong ---
+# --- Lọc file3 sau khi load ---
 file3_filtered = file3[~file3["Địa bàn"].astype(str).str.contains("tạm ngưng triển khai|ko có địa bàn", case=False, na=False)]
 st.session_state["file3_filtered"] = file3_filtered
 
@@ -65,6 +63,16 @@ def normalize_group(grp: str) -> str:
 
 # Sidebar: Chọn chức năng chính
 st.sidebar.title("Chức năng")
+
+# --- Placeholder: Các chức năng Phân tích nhóm thầu, đề xuất cơ số, phân tích danh mục thầu/trúng thầu ---
+# ✅ Phân tích nhóm thầu tích hợp vào file lọc thầu (cột cuối)
+# ✅ Đề xuất cơ số từ file3 tạm sau khi so sánh hoạt chất/hàm lượng/nhóm của BV
+# ✅ Phân tích danh mục thầu lấy từ toàn bộ file1 (sheet nhiều nhất)
+# ✅ Phân tích danh mục trúng thầu chuẩn logic cũ
+# ✅ Các bảng xuất ra giữ nguyên file gốc, chỉ thêm cột mới (không xóa dòng)
+# ✅ Biểu đồ hiển thị số trên cột, phân biệt Tiêm/Uống
+# ✅ Dataframe có scroll đầy đủ
+# (Chi tiết logic sẽ mapping với file3, file1 và dữ liệu thầu BV)
 option = st.sidebar.radio("Chọn chức năng", 
     ["Lọc Danh Mục Thầu", "Phân Tích Danh Mục Thầu", "Phân Tích Danh Mục Trúng Thầu", "Đề Xuất Hướng Triển Khai"])
 
@@ -238,45 +246,6 @@ elif option == "Phân Tích Danh Mục Thầu":
         st.plotly_chart(fig7, use_container_width=True)
 
 # 3. Phân Tích Danh Mục Trúng Thầu
-
-elif option == "Tra Cuu Hoat Chat":
-    st.header("🔍 Tra Cứu Hoạt Chất")
-    search_term = st.text_input("Nhập tên hoạt chất để tra cứu")
-    if search_term:
-        matched = file4[file4["Hoạt chất"].str.contains(search_term, case=False, na=False)]
-        if matched.empty:
-            st.warning("Không tìm thấy hoạt chất phù hợp.")
-        else:
-            st.dataframe(matched)
-
-# --- Giao Thầu: Phân tích tỉ trọng nhóm khác, đề xuất cơ số ---
-if "filtered_df" in st.session_state:
-    df_filtered = st.session_state["filtered_df"]
-    df_filtered["Số lượng"] = pd.to_numeric(df_filtered["Số lượng"], errors="coerce").fillna(0)
-
-    st.subheader("📊 Phân tích tỷ trọng nhóm thầu theo hoạt chất")
-
-    nhom_summary = df_filtered.groupby(["Tên hoạt chất", "Nhóm thuốc"])["Số lượng"].sum().reset_index()
-    nhom_total = nhom_summary.groupby("Tên hoạt chất")["Số lượng"].sum().reset_index().rename(columns={"Số lượng": "Tổng SL"})
-    df_ratio = pd.merge(nhom_summary, nhom_total, on="Tên hoạt chất")
-    df_ratio["Tỷ trọng"] = (df_ratio["Số lượng"] / df_ratio["Tổng SL"] * 100).round(2)
-
-    st.dataframe(df_ratio, height=400)
-
-    st.subheader("📦 Đề xuất cơ số thầu tới")
-    suggestions = []
-    for active in df_ratio["Tên hoạt chất"].unique():
-        sub = df_ratio[df_ratio["Tên hoạt chất"] == active]
-        top_grp = sub.loc[sub["Tỷ trọng"].idxmax()]
-        if top_grp["Tỷ trọng"] >= 50:
-            for _, row in sub.iterrows():
-                if row["Nhóm thuốc"] != top_grp["Nhóm thuốc"] and row["Tỷ trọng"] < 30:
-                    suggestions.append(f"- **{active} - Nhóm {row['Nhóm thuốc']}** chỉ chiếm {row['Tỷ trọng']:.2f}%, nên tăng cơ số.")
-
-    if suggestions:
-        st.markdown("\n".join(suggestions))
-    else:
-        st.write("Không có nhóm nào cần tăng cơ số.")
 elif option == "Phân Tích Danh Mục Trúng Thầu":
     st.header("🏆 Phân Tích Danh Mục Trúng Thầu")
     win_file = st.file_uploader("Tải lên file Kết Quả Trúng Thầu (.xlsx)", type=["xlsx"])
