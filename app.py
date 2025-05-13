@@ -86,16 +86,16 @@ if option == "Lọc Danh Mục Thầu":
         try:
             raw = pd.read_excel(uploaded, sheet_name=sheet, header=None, engine='openpyxl')
         except Exception:
-            # Bỏ styles và errorType
+            # Bỏ styles và errorType từ file .xlsx
             uploaded.seek(0)
-                raw_data = uploaded.read()
+            raw_data = uploaded.read()
             zf = zipfile.ZipFile(BytesIO(raw_data), 'r')
             cleaned = BytesIO()
             with zipfile.ZipFile(cleaned, 'w') as w:
                 for item in zf.infolist():
                     data = zf.read(item.filename)
                     if item.filename.startswith('xl/worksheets/') or item.filename == 'xl/styles.xml':
-                        # remove errorType and style tags
+                        # Loại bỏ thuộc tính errorType và nhóm style thừa
                         data = re.sub(b' errorType="[^"]+"', b'', data)
                         data = re.sub(b'<cellStyleXfs.*?</cellStyleXfs>', b'', data, flags=re.DOTALL)
                     w.writestr(item.filename, data)
@@ -104,7 +104,6 @@ if option == "Lọc Danh Mục Thầu":
             ws2 = wb2[sheet]
             rows = list(ws2.iter_rows(values_only=True))
             raw = pd.DataFrame(rows)
-
         # Tìm và chọn header
         header_idx_auto = None
         scores = []
