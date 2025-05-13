@@ -111,24 +111,34 @@ if option == "Lọc Danh Mục Thầu":
             data = [row for row in ws.iter_rows(values_only=True)]
             raw = pd.DataFrame(data)
 
-        # Tìm header row trong 10 dòng đầu
-        header_idx = None
+        # Tìm header row tự động trong 10 dòng đầu
+        header_idx_auto = None
         scores = []
-        for i in range(min(10, len(raw))):
+        for i in range(min(10, raw.shape[0])):
             text = normalize_text(' '.join(raw.iloc[i].fillna('').astype(str).tolist()))
             sc = sum(kw in text for kw in ['tenhoatchat','soluong','nhomthuoc','nongdo'])
             scores.append((i, sc))
             if 'tenhoatchat' in text and 'soluong' in text:
-                header_idx = i
+                header_idx_auto = i
                 break
-        if header_idx is None:
+        if header_idx_auto is None:
             idx, sc = max(scores, key=lambda x: x[1])
             if sc > 0:
-                header_idx = idx
+                header_idx_auto = idx
                 st.warning(f"Tự động chọn dòng tiêu đề tại dòng {idx+1}")
             else:
-                st.error("❌ Không xác định được dòng tiêu đề.")
-                st.stop()
+                header_idx_auto = 0
+                st.warning("Không tìm thấy tiêu đề tự động, mặc định dùng dòng 1")
+        # Hiển thị preview để người dùng kiểm tra và chọn dòng header chính xác
+        st.subheader("🔎 Xem 10 dòng đầu để chọn header (dòng 1 là index 0)")
+        st.dataframe(raw.head(10))
+        header_idx_input = st.number_input(
+            "Chọn dòng header (1-10):", min_value=1,
+            max_value=min(10, raw.shape[0]),
+            value=header_idx_auto+1,
+            step=1
+        )
+        header_idx = header_idx_input - 1
 
         # Gán header và lấy phần body
         header = raw.iloc[header_idx].tolist()
