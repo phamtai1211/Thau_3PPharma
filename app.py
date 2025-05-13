@@ -87,7 +87,8 @@ if option == "Lọc Danh Mục Thầu":
             raw = pd.read_excel(uploaded, sheet_name=sheet, header=None, engine='openpyxl')
         except Exception:
             # Bỏ styles và errorType
-            raw_data = uploaded.read()
+            uploaded.seek(0)
+                raw_data = uploaded.read()
             zf = zipfile.ZipFile(BytesIO(raw_data), 'r')
             cleaned = BytesIO()
             with zipfile.ZipFile(cleaned, 'w') as w:
