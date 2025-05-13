@@ -95,10 +95,14 @@ if option == "Lọc Danh Mục Thầu":
                 for item in zf.infolist():
                     data = zf.read(item.filename)
                     if item.filename.startswith('xl/worksheets/') or item.filename == 'xl/styles.xml':
-                        # Loại bỏ thuộc tính errorType và nhóm style thừa
-                        data = re.sub(b' errorType="[^"]+"', b'', data)
+                        # Loại bỏ thuộc tính errorType, errorStyle và nhóm style thừa
+                        data = re.sub(b' errorType\="[^\"]+"', b'', data)
+                        data = re.sub(b' errorStyle\="[^\"]+"', b'', data)
+                        # Loại bỏ styleXfs
                         data = re.sub(b'<cellStyleXfs.*?</cellStyleXfs>', b'', data, flags=re.DOTALL)
-                    w.writestr(item.filename, data)
+                        # Loại bỏ dataValidations
+                        data = re.sub(b'<dataValidations.*?</dataValidations>', b'', data, flags=re.DOTALL)
+                    w.writestr(item.filename, data)(item.filename, data)
             cleaned.seek(0)
             wb2 = load_workbook(cleaned, read_only=True, data_only=True)
             ws2 = wb2[sheet]
