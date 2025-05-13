@@ -85,6 +85,27 @@ if option == "Lọc Danh Mục Thầu":
         try:
             raw = pd.read_excel(uploaded, sheet_name=sheet, header=None, engine='openpyxl')
         except Exception:
+            try:
+                # Loại bỏ styles để tránh lỗi openpyxl
+                import zipfile
+                temp = BytesIO()
+                # Đọc nguyên file upload vào buffer
+                uploaded.seek(0)
+                raw_data = uploaded.read()
+                zf = zipfile.ZipFile(BytesIO(raw_data), 'r')
+                with zipfile.ZipFile(temp, 'w') as w:
+                    for item in zf.infolist():
+                        if item.filename != 'xl/styles.xml':
+                            w.writestr(item, zf.read(item.filename))
+                temp.seek(0)
+                # Đọc workbook đã strip style
+                wb = load_workbook(temp, read_only=True, data_only=True)
+                ws = wb[sheet]
+                data = [row for row in ws.iter_rows(values_only=True)]
+                raw = pd.DataFrame(data)
+            except Exception:
+                st.error("❌ Không đọc được file Excel. Vui lòng lưu file thành CSV và thử lại.")
+                st.stop()
             wb = load_workbook(uploaded, read_only=True, data_only=True)
             ws = wb[sheet]
             data = [row for row in ws.iter_rows(values_only=True)]
