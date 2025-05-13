@@ -89,17 +89,19 @@ if option == "Lọc Danh Mục Thầu":
             raw_data = uploaded.read()
             zf = zipfile.ZipFile(BytesIO(raw_data), 'r')
             cleaned = BytesIO()
+                        cleaned = BytesIO()
             with zipfile.ZipFile(cleaned, 'w') as w:
                 for item in zf.infolist():
+                    # Skip all style and theme files to avoid style parsing errors
+                    if item.filename.startswith('xl/styles') or item.filename.startswith('xl/theme'):
+                        continue
                     data = zf.read(item.filename)
-                    if item.filename.startswith('xl/worksheets/') or item.filename == 'xl/styles.xml':
-                        # remove problematic attributes/tags
-                        data = re.sub(b' errorType="[^"]+"', b'', data)
-                        data = re.sub(b' errorStyle="[^"]+"', b'', data)
-                        data = re.sub(b'<cellStyleXfs.*?</cellStyleXfs>', b'', data, flags=re.DOTALL)
+                    # Strip problematic dataValidations in worksheet XMLs
+                    if item.filename.startswith('xl/worksheets/'):
                         data = re.sub(b'<dataValidations.*?</dataValidations>', b'', data, flags=re.DOTALL)
                     w.writestr(item.filename, data)
             cleaned.seek(0)
+(0)
             wb2 = load_workbook(cleaned, read_only=True, data_only=True)
             ws2 = wb2[sheet]
             rows = list(ws2.iter_rows(values_only=True))
