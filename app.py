@@ -175,8 +175,9 @@ if option == "Lọc Danh Mục Thầu":
         st.success(f"✅ Tổng dòng khớp: {len(display_df)}")
         # Prepare display: convert all to string and render as markdown table to avoid Arrow errors
         display_ui = display_df.fillna('').astype(str)
-        md = display_ui.to_markdown(index=False)
-        st.markdown(md, unsafe_allow_html=True)
+        # Render as plain text table to avoid tabulate dependency
+        table_str = display_ui.to_string(index=False)
+        st.text(table_str), unsafe_allow_html=True)
         st.session_state['filtered_display'] = display_df['filtered_display'] = display_df
         st.session_state['filtered_export'] = export_df
         # Tra cứu hoạt chất
@@ -186,8 +187,9 @@ if option == "Lọc Danh Mục Thầu":
             # Convert all to string to avoid NaN
             search_ui = df_search.fillna('').astype(str)
             # Render as markdown table to skip Arrow
-            md_search = search_ui.to_markdown(index=False)
-            st.markdown(md_search)
+            # Render search results as plain text
+            search_str = search_ui.to_string(index=False)
+            st.text(search_str)
         # Download
         buf = BytesIO()
         with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
