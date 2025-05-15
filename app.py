@@ -175,34 +175,9 @@ if option == "Lọc Danh Mục Thầu":
         st.success(f"✅ Tổng dòng khớp: {len(display_df)}")
         # Prepare display: render as styled HTML table with horizontal scroll
         display_ui = display_df.fillna('').astype(str)
-        html = display_ui.to_html(index=False)
-        st.markdown(
-            f'<div style="width:100%;overflow-x:auto;border:1px solid #ddd;padding:5px;">{html}</div>',
-            unsafe_allow_html=True
-        )
-        # Tra cứu hoạt chất
-        kw = st.text_input("🔍 Tra cứu hoạt chất:")
-        if kw:
-            df_search = display_df[display_df['Tên hoạt chất'].str.contains(kw, case=False, na=False)]
-            # Convert all to string to avoid NaN
-            search_ui = df_search.fillna('').astype(str)
-            # Render as markdown table to skip Arrow
-            # Render search results as plain text
-            search_str = search_ui.to_string(index=False)
-            st.text(search_str)
-        # Download
-        buf = BytesIO()
-        with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
-            export_df.to_excel(writer, index=False, sheet_name='Kết quả')
-        st.download_button('⬇️ Tải File', data=buf.getvalue(), file_name='Ketqua_loc_all.xlsx')
-
-# 2. Phân Tích Danh Mục Thầu
-elif option == "Phân Tích Danh Mục Thầu":
-    st.header("📊 Phân Tích Danh Mục Thầu")
-    if 'filtered_display' not in st.session_state:
-        st.info("Vui lòng thực hiện 'Lọc Danh Mục Thầu' trước.")
-    else:
-        df = st.session_state['filtered_display'].copy()
+        # Display with st.write (HTML table) to preserve styling
+        st.write(display_ui)
+        st.session_state['filtered_display'] = display_df.copy()
         df['Số lượng'] = pd.to_numeric(df['Số lượng'], errors='coerce').fillna(0)
         df['Giá kế hoạch'] = pd.to_numeric(df.get('Giá kế hoạch',0), errors='coerce').fillna(0)
         df['Trị giá'] = df['Số lượng'] * df['Giá kế hoạch']
