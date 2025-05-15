@@ -161,11 +161,11 @@ if option == "Lọc Danh Mục Thầu":
     if uploaded:
         display_df, export_df = process_uploaded(uploaded, df3_temp)
         st.success(f"✅ Tổng dòng khớp: {len(display_df)}")
-        # Clean object columns for display to avoid JSON/Arrow errors
-        display_df_ui = display_df.copy()
-        for col in display_df_ui.select_dtypes(include=['object']).columns:
-            display_df_ui[col] = display_df_ui[col].fillna('').astype(str)
-        st.dataframe(display_df_ui)
+        # Hiển thị kết quả với fallback nếu arrow conversion lỗi
+        try:
+            st.dataframe(display_df_ui)
+        except ValueError:
+            st.table(display_df_ui)
         st.session_state['filtered_display'] = display_df
         st.session_state['filtered_export'] = export_df
         kw = st.text_input("🔍 Tra cứu hoạt chất:")
