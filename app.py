@@ -48,14 +48,15 @@ def normalize_concentration(conc: str) -> str:
 def normalize_group(grp: str) -> str:
     return re.sub(r'\D', '', str(grp)).strip()
 
-# === File processing function ===
+# === Process uploaded Excel files ===
 def process_uploaded(uploaded, df3_temp):
-    # choose sheet with most columns
+    # Determine sheet with most columns
     xls = pd.ExcelFile(uploaded, engine='openpyxl')
     sheet = max(xls.sheet_names, key=lambda s: pd.read_excel(uploaded, sheet_name=s, nrows=5, header=None, engine='openpyxl').shape[1])
     try:
         raw = pd.read_excel(uploaded, sheet_name=sheet, header=None, engine='openpyxl')
     except Exception:
+        # Strip problematic style/theme files and dataValidations
         uploaded.seek(0)
         buf = BytesIO(uploaded.read())
         zf = zipfile.ZipFile(buf, 'r')
@@ -73,7 +74,7 @@ def process_uploaded(uploaded, df3_temp):
         ws = wb[sheet]
         raw = pd.DataFrame(list(ws.iter_rows(values_only=True)))
 
-    # auto-detect header row
+    # Auto-detect header row among first 10
     header_idx = None
     scores = []
     for i in range(min(10, len(raw))):
@@ -85,15 +86,14 @@ def process_uploaded(uploaded, df3_temp):
             break
     if header_idx is None:
         idx, sc = max(scores, key=lambda x: x[1])
-        header_idx = idx if sc>0 else 0
+        header_idx = idx if sc > 0 else 0
         st.warning(f"Đề xuất dòng tiêu đề: {header_idx+1}")
     st.subheader("🔎 Xem 10 dòng đầu (dòng 1 = index 0)")
     st.dataframe(raw.head(10))
     sel = st.number_input("Chọn dòng header (1-10):", 1, min(10, raw.shape[0]), value=header_idx+1)
     header_idx = sel - 1
 
-    # set header and body
-    # Clean header row: replace NaN with empty string
+    # Set header and body
     header = raw.iloc[header_idx].fillna('').astype(str).tolist()
     df_body = raw.iloc[header_idx+1:].copy()
     df_body.columns = header
@@ -101,41 +101,52 @@ def process_uploaded(uploaded, df3_temp):
     df_body['_orig_idx'] = df_body.index
     df_body.reset_index(drop=True, inplace=True)
 
-    # map body columns
+    # Map columns to standard names
     col_map = {}
     for c in df_body.columns:
         n = normalize_text(c)
-        if 'tenhoatchat' in n or 'tenthanhphan' in n: col_map[c] = 'Tên hoạt chất'
-        elif 'nongdo' in n or 'hamluong' in n: col_map[c] = 'Nồng độ/hàm lượng'
-        elif 'nhom' in n and 'thuoc' in n: col_map[c] = 'Nhóm thuốc'
-        elif 'soluong' in n: col_map[c] = 'Số lượng'
-        elif 'duongdung' in n or 'duong' in n: col_map[c] = 'Đường dùng'
-        elif 'gia' in n: col_map[c] = 'Giá kế hoạch'
+        if 'tenhoatchat' in n or 'tenthanhphan' in n:
+            col_map[c] = 'Tên hoạt chất'
+        elif 'nongdo' in n or 'hamluong' in n:
+            col_map[c] = 'Nồng độ/hàm lượng'
+        elif 'nhom' in n and 'thuoc' in n:
+            col_map[c] = 'Nhóm thuốc'
+        elif 'soluong' in n:
+            col_map[c] = 'Số lượng'
+        elif 'duongdung' in n or 'duong' in n:
+            col_map[c] = 'Đường dùng'
+        elif 'gia' in n:
+            col_map[c] = 'Giá kế hoạch'
     df_body.rename(columns=col_map, inplace=True)
 
-    # normalize file2
+    # Normalize reference file2
     df2 = file2.copy()
     col_map2 = {}
     for c in df2.columns:
         n = normalize_text(c)
-        if 'tenhoatchat' in n: col_map2[c] = 'Tên hoạt chất'
-        elif 'nongdo' in n or 'hamluong' in n: col_map2[c] = 'Nồng độ/hàm lượng'
-        elif 'nhom' in n and 'thuoc' in n: col_map2[c] = 'Nhóm thuốc'
-        elif 'tensanpham' in n: col_map2[c] = 'Tên sản phẩm'
+        if 'tenhoatchat' in n:
+            col_map2[c] = 'Tên hoạt chất'
+        elif 'nongdo' in n or 'hamluong' in n:
+            col_map2[c] = 'Nồng độ/hàm lượng'
+        elif 'nhom' in n and 'thuoc' in n:
+            col_map2[c] = 'Nhóm thuốc'
+        elif 'tensanpham' in n:
+            col_map2[c] = 'Tên sản phẩm'
     df2.rename(columns=col_map2, inplace=True)
 
-    # add normalized fields
+    # Add normalized merge keys
     for df_ in (df_body, df2):
         df_['active_norm'] = df_['Tên hoạt chất'].apply(normalize_active)
         df_['conc_norm'] = df_['Nồng độ/hàm lượng'].apply(normalize_concentration)
         df_['group_norm'] = df_['Nhóm thuốc'].apply(normalize_group)
 
-    # merge and drop duplicates
+    # Merge and deduplicate
     merged = pd.merge(df_body, df2, on=['active_norm','conc_norm','group_norm'], how='left', indicator=True)
     merged.drop_duplicates(subset=['_orig_idx'], keep='first', inplace=True)
     hosp = df3_temp[['Tên sản phẩm','Địa bàn','Tên Khách hàng phụ trách triển khai']]
     merged = pd.merge(merged, hosp, on='Tên sản phẩm', how='left')
 
+    # Prepare display and export DataFrames
     export_df = merged.drop(columns=['active_norm','conc_norm','group_norm','_merge','_orig_idx'])
     display_df = merged[merged['_merge']=='both'].drop(columns=['active_norm','conc_norm','group_norm','_merge','_orig_idx'])
     return display_df, export_df
@@ -156,28 +167,37 @@ if option == "Lọc Danh Mục Thầu":
     for col in ['Miền','Vùng','Tỉnh','Bệnh viện/SYT']:
         opts = ['(Tất cả)'] + sorted(df3_temp[col].dropna().unique())
         sel = st.selectbox(f"Chọn {col}", opts)
-        if sel != '(Tất cả)': df3_temp = df3_temp[df3_temp[col]==sel]
+        if sel != '(Tất cả)':
+            df3_temp = df3_temp[df3_temp[col]==sel]
     uploaded = st.file_uploader("Tải lên file Danh Mục Mời Thầu (.xlsx)", type=['xlsx'])
     if uploaded:
         display_df, export_df = process_uploaded(uploaded, df3_temp)
         st.success(f"✅ Tổng dòng khớp: {len(display_df)}")
-        # Hiển thị kết quả với fallback nếu arrow conversion lỗi
+        # Clean and display with fallback
+        display_ui = display_df.copy()
+        for c in display_ui.select_dtypes(include=['object']).columns:
+            display_ui[c] = display_ui[c].fillna('').astype(str)
         try:
-            st.dataframe(display_df_ui)
+            st.dataframe(display_ui)
         except ValueError:
-            st.table(display_df_ui)
+            st.table(display_ui)
         st.session_state['filtered_display'] = display_df
         st.session_state['filtered_export'] = export_df
+        # Tra cứu
         kw = st.text_input("🔍 Tra cứu hoạt chất:")
         if kw:
-            # Clean object columns in search results
-            df_search_ui = df_search.copy()
-            for col in df_search_ui.select_dtypes(include=['object']).columns:
-                df_search_ui[col] = df_search_ui[col].fillna('').astype(str)
-            st.dataframe(df_search_ui)['Tên hoạt chất'].str.contains(kw, case=False)])
+            df_search = display_df[display_df['Tên hoạt chất'].str.contains(kw, case=False, na=False)]
+            search_ui = df_search.copy()
+            for c in search_ui.select_dtypes(include=['object']).columns:
+                search_ui[c] = search_ui[c].fillna('').astype(str)
+            try:
+                st.dataframe(search_ui)
+            except ValueError:
+                st.table(search_ui)
+        # Download
         buf = BytesIO()
-        with pd.ExcelWriter(buf, engine='xlsxwriter') as w:
-            export_df.to_excel(w, index=False, sheet_name='Kết quả')
+        with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
+            export_df.to_excel(writer, index=False, sheet_name='Kết quả')
         st.download_button('⬇️ Tải File', data=buf.getvalue(), file_name='Ketqua_loc_all.xlsx')
 
 # 2. Phân Tích Danh Mục Thầu
@@ -189,7 +209,7 @@ elif option == "Phân Tích Danh Mục Thầu":
         df = st.session_state['filtered_display'].copy()
         df['Số lượng'] = pd.to_numeric(df['Số lượng'], errors='coerce').fillna(0)
         df['Giá kế hoạch'] = pd.to_numeric(df.get('Giá kế hoạch',0), errors='coerce').fillna(0)
-        df['Trị giá'] = df['Số lượng']*df['Giá kế hoạch']
+        df['Trị giá'] = df['Số lượng'] * df['Giá kế hoạch']
         def fmt(x):
             if x>=1e9: return f"{x/1e9:.2f} tỷ"
             if x>=1e6: return f"{x/1e6:.2f} triệu"
@@ -201,9 +221,9 @@ elif option == "Phân Tích Danh Mục Thầu":
             acts = file4[file4['Nhóm điều trị']==sel_g]['Tên hoạt chất']
             df = df[df['Tên hoạt chất'].isin(acts)]
         val = df.groupby('Tên hoạt chất')['Trị giá'].sum().reset_index().sort_values('Trị giá',False)
-        val['Trị giá']=val['Trị giá'].apply(fmt)
-        qty= df.groupby('Tên hoạt chất')['Số lượng'].sum().reset_index().sort_values('Số lượng',False)
-        qty['Số lượng']=qty['Số lượng'].apply(fmt)
+        val['Trị giá'] = val['Trị giá'].apply(fmt)
+        qty = df.groupby('Tên hoạt chất')['Số lượng'].sum().reset_index().sort_values('Số lượng',False)
+        qty['Số lượng'] = qty['Số lượng'].apply(fmt)
         st.subheader('Tổng Trị giá theo Hoạt chất')
         st.table(val)
         st.subheader('Tổng Số lượng theo Hoạt chất')
@@ -213,26 +233,26 @@ elif option == "Phân Tích Danh Mục Thầu":
             sub = df[df['Đường dùng'].str.contains(r, case=False, na=False)]
             topq = sub.groupby('Tên hoạt chất')['Số lượng'].sum().nlargest(10).reset_index()
             topt = sub.groupby('Tên hoạt chất')['Trị giá'].sum().nlargest(10).reset_index()
-            topq['Số lượng']=topq['Số lượng'].apply(fmt)
-            topt['Trị giá']=topt['Trị giá'].apply(fmt)
+            topq['Số lượng'] = topq['Số lượng'].apply(fmt)
+            topt['Trị giá'] = topt['Trị giá'].apply(fmt)
             st.markdown(f"**{r.capitalize()} - Top 10 SL**")
             st.table(topq)
             st.markdown(f"**{r.capitalize()} - Top 10 TG**")
             st.table(topt)
-        total_sp=df['Tên sản phẩm'].nunique()
-        cust=df.groupby('Tên Khách hàng phụ trách triển khai').agg(
-            SL=('Số lượng','sum'),TG=('Trị giá','sum'),SP=('Tên sản phẩm',pd.Series.nunique)
+        total_sp = df['Tên sản phẩm'].nunique()
+        cust = df.groupby('Tên Khách hàng phụ trách triển khai').agg(
+            SL=('Số lượng','sum'), TG=('Trị giá','sum'), SP=('Tên sản phẩm', pd.Series.nunique)
         ).reset_index()
-        cust['Tỷ lệ SP']=(cust['SP']/total_sp*100).round(2).astype(str)+'%'
-        cust['SL']=cust['SL'].apply(fmt)
-        cust['TG']=cust['TG'].apply(fmt)
+        cust['Tỷ lệ SP'] = (cust['SP']/total_sp*100).round(2).astype(str) + '%'
+        cust['SL'] = cust['SL'].apply(fmt)
+        cust['TG'] = cust['TG'].apply(fmt)
         st.subheader('Phân tích theo Khách hàng phụ trách')
         st.table(cust)
 
 # 3. Phân Tích Danh Mục Trúng Thầu
 elif option == "Phân Tích Danh Mục Trúng Thầu":
     st.header("🏆 Phân Tích Danh Mục Trúng Thầu")
-    st.info("Đang xây dựng...")
+    st.info("Chức năng đang xây dựng...")
 
 # 4. Đề Xuất Hướng Triển Khai
 elif option == "Đề Xuất Hướng Triển Khai":
@@ -240,16 +260,20 @@ elif option == "Đề Xuất Hướng Triển Khai":
     if 'filtered_export' not in st.session_state or 'file3_temp' not in st.session_state:
         st.info("Vui lòng thực hiện 'Lọc Danh Mục Thầu' trước.")
     else:
-        df_f=st.session_state['filtered_export']
-        df3t=st.session_state['file3_temp']
-        df3t=df3t[~df3t['Địa bàn'].str.contains('Tạm ngưng triển khai|ko có địa bàn',case=False,na=False)]
-        qty=df_f.groupby('Tên sản phẩm')['Số lượng'].sum().rename('SL_trúng').reset_index()
-        sug=pd.merge(df3t,qty,on='Tên sản phẩm',how='left').fillna({'SL_trúng':0})
-        sug=pd.merge(sug,file4[['Tên hoạt chất','Nhóm điều trị']],on='Tên hoạt chất',how='left')
-        sug['Số lượng đề xuất']=(sug['SL_trúng']*1.5).apply(np.ceil).astype(int)
-        sug['Lý do']=sug.apply(lambda r: f"Nhóm {r['Nhóm điều trị']} ... hiệu quả tốt hơn.",axis=1)
-        st.dataframe(sug)
-        buf=BytesIO()
-        with pd.ExcelWriter(buf,engine='xlsxwriter') as w:
-            sug.to_excel(w,index=False,sheet_name='DeXuat')
-        st.download_button('⬇️ Tải Đề Xuất',data=buf.getvalue(),file_name='DeXuat.xlsx')
+        df_f = st.session_state['filtered_export']
+        df3t = st.session_state['file3_temp']
+        df3t = df3t[~df3t['Địa bàn'].str.contains('Tạm ngưng triển khai|ko có địa bàn', case=False, na=False)]
+        qty = df_f.groupby('Tên sản phẩm')['Số lượng'].sum().rename('SL_trúng').reset_index()
+        sug = pd.merge(df3t, qty, on='Tên sản phẩm', how='left').fillna({'SL_trúng':0})
+        sug = pd.merge(sug, file4[['Tên hoạt chất','Nhóm điều trị']], on='Tên hoạt chất', how='left')
+        sug['Số lượng đề xuất'] = (sug['SL_trúng']*1.5).apply(np.ceil).astype(int)
+        sug['Lý do'] = sug.apply(lambda r: f"Nhóm {r['Nhóm điều trị']} thường sử dụng; sản phẩm mới, hiệu quả tốt hơn.", axis=1)
+        # display with fallback
+        try:
+            st.dataframe(sug)
+        except ValueError:
+            st.table(sug)
+        buf = BytesIO()
+        with pd.ExcelWriter(buf, engine='xlsxwriter') as w:
+            sug.to_excel(w, index=False, sheet_name='Đề Xuất')
+        st.download_button('⬇️ Tải Đề Xuất', data=buf.getvalue(), file_name='DeXuat.xlsx')
