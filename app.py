@@ -74,7 +74,7 @@ def process_uploaded(uploaded, df3_temp):
         ws = wb[sheet]
         raw = pd.DataFrame(list(ws.iter_rows(values_only=True)))
 
-    # Auto-detect header row among first 10 and set header_idx
+    # Auto-detect header row among first 10
     header_idx = None
     scores = []
     for i in range(min(10, len(raw))):
@@ -87,10 +87,10 @@ def process_uploaded(uploaded, df3_temp):
     if header_idx is None:
         idx, sc = max(scores, key=lambda x: x[1])
         header_idx = idx if sc > 0 else 0
-        st.warning(f"Đề xuất dòng tiêu đề: {header_idx+1}")
 
-    # Set header and body directly, without user preview/selection
-    df_body = raw.iloc[header_idx+1:].copy():].copy()
+    # Set header and body without user preview
+    header = raw.iloc[header_idx].fillna('').astype(str).tolist()
+    df_body = raw.iloc[header_idx+1:].copy()
     df_body.columns = header
     df_body = df_body.dropna(subset=header, how='all')
     df_body['_orig_idx'] = df_body.index
