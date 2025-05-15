@@ -179,17 +179,15 @@ if option == "Lọc Danh Mục Thầu":
         st.markdown(md, unsafe_allow_html=True)
         st.session_state['filtered_display'] = display_df['filtered_display'] = display_df
         st.session_state['filtered_export'] = export_df
-        # Tra cứu
+        # Tra cứu hoạt chất
         kw = st.text_input("🔍 Tra cứu hoạt chất:")
         if kw:
             df_search = display_df[display_df['Tên hoạt chất'].str.contains(kw, case=False, na=False)]
-            search_ui = df_search.copy()
-            for c in search_ui.select_dtypes(include=['object']).columns:
-                search_ui[c] = search_ui[c].fillna('').astype(str)
-            try:
-                st.dataframe(search_ui)
-            except ValueError:
-                st.table(search_ui)
+            # Convert all to string to avoid NaN
+            search_ui = df_search.fillna('').astype(str)
+            # Render as markdown table to skip Arrow
+            md_search = search_ui.to_markdown(index=False)
+            st.markdown(md_search)
         # Download
         buf = BytesIO()
         with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
