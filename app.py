@@ -173,10 +173,13 @@ if option == "Lọc Danh Mục Thầu":
     if uploaded:
         display_df, export_df = process_uploaded(uploaded, df3_temp)
         st.success(f"✅ Tổng dòng khớp: {len(display_df)}")
-        # Prepare display: render as HTML table to avoid Arrow errors
+        # Prepare display: render as styled HTML table with horizontal scroll
         display_ui = display_df.fillna('').astype(str)
         html = display_ui.to_html(index=False)
-        st.markdown(html, unsafe_allow_html=True)
+        st.markdown(
+            f'<div style="width:100%;overflow-x:auto;border:1px solid #ddd;padding:5px;">{html}</div>',
+            unsafe_allow_html=True
+        )
         # Tra cứu hoạt chất
         kw = st.text_input("🔍 Tra cứu hoạt chất:")
         if kw:
