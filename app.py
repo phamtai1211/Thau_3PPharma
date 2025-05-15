@@ -176,8 +176,11 @@ if option == "Lọc Danh Mục Thầu":
         # Prepare display: convert all to string and render as markdown table to avoid Arrow errors
         display_ui = display_df.fillna('').astype(str)
         # Render as plain text table to avoid tabulate dependency
-        table_str = display_ui.to_string(index=False)
-        st.text(table_str)
+        display_ui = display_df.fillna('').astype(str)
+        try:
+            st.table(display_ui)
+        except Exception:
+            st.text(display_ui.to_string(index=False))
         st.session_state['filtered_display'] = display_df['filtered_display'] = display_df
         st.session_state['filtered_export'] = export_df
         # Tra cứu hoạt chất
