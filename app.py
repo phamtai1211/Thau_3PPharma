@@ -93,7 +93,8 @@ def process_uploaded(uploaded, df3_temp):
     header_idx = sel - 1
 
     # set header and body
-    header = raw.iloc[header_idx].tolist()
+    # Clean header row: replace NaN with empty string
+    header = raw.iloc[header_idx].fillna('').astype(str).tolist()
     df_body = raw.iloc[header_idx+1:].copy()
     df_body.columns = header
     df_body = df_body.dropna(subset=header, how='all')
