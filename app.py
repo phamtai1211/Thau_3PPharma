@@ -173,15 +173,11 @@ if option == "Lọc Danh Mục Thầu":
     if uploaded:
         display_df, export_df = process_uploaded(uploaded, df3_temp)
         st.success(f"✅ Tổng dòng khớp: {len(display_df)}")
-        # Clean and display with fallback
-        display_ui = display_df.copy()
-        for c in display_ui.select_dtypes(include=['object']).columns:
-            display_ui[c] = display_ui[c].fillna('').astype(str)
-        try:
-            st.dataframe(display_ui)
-        except ValueError:
-            st.table(display_ui)
-        st.session_state['filtered_display'] = display_df
+        # Prepare display: convert all to string and render as markdown table to avoid Arrow errors
+        display_ui = display_df.fillna('').astype(str)
+        md = display_ui.to_markdown(index=False)
+        st.markdown(md, unsafe_allow_html=True)
+        st.session_state['filtered_display'] = display_df['filtered_display'] = display_df
         st.session_state['filtered_export'] = export_df
         # Tra cứu
         kw = st.text_input("🔍 Tra cứu hoạt chất:")
