@@ -177,7 +177,7 @@ if option == "Lọc Danh Mục Thầu":
         display_ui = display_df.fillna('').astype(str)
         # Render as plain text table to avoid tabulate dependency
         table_str = display_ui.to_string(index=False)
-        st.text(table_str), unsafe_allow_html=True)
+        st.text(table_str)
         st.session_state['filtered_display'] = display_df['filtered_display'] = display_df
         st.session_state['filtered_export'] = export_df
         # Tra cứu hoạt chất
