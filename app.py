@@ -173,16 +173,12 @@ if option == "Lọc Danh Mục Thầu":
     if uploaded:
         display_df, export_df = process_uploaded(uploaded, df3_temp)
         st.success(f"✅ Tổng dòng khớp: {len(display_df)}")
-        # Prepare display: convert all to string and render as markdown table to avoid Arrow errors
-        display_ui = display_df.fillna('').astype(str)
-        # Render as plain text table to avoid tabulate dependency
+        # Prepare display: convert all to string to ensure simple types
         display_ui = display_df.fillna('').astype(str)
         try:
-            st.table(display_ui)
+            st.dataframe(display_ui, use_container_width=True)
         except Exception:
-            st.text(display_ui.to_string(index=False))
-        st.session_state['filtered_display'] = display_df['filtered_display'] = display_df
-        st.session_state['filtered_export'] = export_df
+            st.table(display_ui)
         # Tra cứu hoạt chất
         kw = st.text_input("🔍 Tra cứu hoạt chất:")
         if kw:
