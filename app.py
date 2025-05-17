@@ -9,7 +9,6 @@ from io import BytesIO
 from openpyxl import load_workbook
 import plotly.express as px
 from datetime import datetime
-import os
 
 # === Load default data from GitHub ===
 @st.cache_data
@@ -53,9 +52,9 @@ def normalize_group(grp: str) -> str:
 
 # === Process uploaded Excel files ===
 def process_uploaded(uploaded, df3_temp):
+    # Determine sheet with most columns
     xls = pd.ExcelFile(uploaded, engine='openpyxl')
-    sheet = max(xls.sheet_names,
-                key=lambda s: pd.read_excel(uploaded, sheet_name=s, nrows=5, header=None, engine='openpyxl').shape[1])
+    sheet = max(xls.sheet_names, key=lambda s: pd.read_excel(uploaded, sheet_name=s, nrows=5, header=None, engine='openpyxl').shape[1])
     try:
         raw = pd.read_excel(uploaded, sheet_name=sheet, header=None, engine='openpyxl')
     except Exception:
@@ -65,7 +64,7 @@ def process_uploaded(uploaded, df3_temp):
         out = BytesIO()
         with zipfile.ZipFile(out, 'w') as w:
             for item in zf.infolist():
-                if item.filename.startswith(('xl/styles','xl/theme')):
+                if item.filename.startswith('xl/styles') or item.filename.startswith('xl/theme'):
                     continue
                 data = zf.read(item.filename)
                 if item.filename.startswith('xl/worksheets/'):
@@ -76,7 +75,7 @@ def process_uploaded(uploaded, df3_temp):
         ws = wb[sheet]
         raw = pd.DataFrame(list(ws.iter_rows(values_only=True)))
 
-    # Auto-detect header
+    # Auto-detect header row among first 10
     header_idx = None
     scores = []
     for i in range(min(10, len(raw))):
@@ -97,7 +96,7 @@ def process_uploaded(uploaded, df3_temp):
     df_body['_orig_idx'] = df_body.index
     df_body.reset_index(drop=True, inplace=True)
 
-    # Map columns
+    # Map to standard names
     col_map = {}
     for c in df_body.columns:
         n = normalize_text(c)
@@ -115,7 +114,7 @@ def process_uploaded(uploaded, df3_temp):
             col_map[c] = 'Giá kế hoạch'
     df_body.rename(columns=col_map, inplace=True)
 
-    # Normalize df2
+    # Prepare reference df2
     df2_norm = file2.copy()
     col_map2 = {}
     for c in df2_norm.columns:
@@ -130,24 +129,23 @@ def process_uploaded(uploaded, df3_temp):
             col_map2[c] = 'Tên sản phẩm'
     df2_norm.rename(columns=col_map2, inplace=True)
 
-    # Merge keys
+    # Add merge keys
     for df_ in (df_body, df2_norm):
         df_['active_norm'] = df_['Tên hoạt chất'].apply(normalize_active)
         df_['conc_norm'] = df_['Nồng độ/hàm lượng'].apply(normalize_concentration)
         df_['group_norm'] = df_['Nhóm thuốc'].apply(normalize_group)
 
-    merged = pd.merge(df_body, df2_norm, on=['active_norm','conc_norm','group_norm'],
-                      how='left', indicator=True)
+    merged = pd.merge(df_body, df2_norm, on=['active_norm','conc_norm','group_norm'], how='left', indicator=True)
     merged.drop_duplicates(subset=['_orig_idx'], keep='first', inplace=True)
-    hosp = file3[['Tên sản phẩm','Địa bàn','Tên Khách hàng phụ trách triển khai']]
+
+    hosp = df3_temp[['Tên sản phẩm','Địa bàn','Tên Khách hàng phụ trách triển khai']]
     merged = pd.merge(merged, hosp, on='Tên sản phẩm', how='left')
 
     export_df = merged.drop(columns=['active_norm','conc_norm','group_norm','_merge','_orig_idx'])
-    display_df = merged[merged['_merge']=='both']\
-                    .drop(columns=['active_norm','conc_norm','group_norm','_merge','_orig_idx'])
+    display_df = merged[merged['_merge']=='both'].drop(columns=['active_norm','conc_norm','group_norm','_merge','_orig_idx'])
     return display_df, export_df
 
-# UI
+# === Main UI ===
 st.sidebar.title("Chức năng")
 option = st.sidebar.radio("Chọn chức năng", [
     "Lọc Danh Mục Thầu",
@@ -156,6 +154,7 @@ option = st.sidebar.radio("Chọn chức năng", [
     "Đề Xuất Hướng Triển Khai"
 ])
 
+# 1. Lọc Danh Mục Thầu
 if option == "Lọc Danh Mục Thầu":
     st.header("📂 Lọc Danh Mục Thầu")
     df3_temp = file3.copy()
@@ -164,54 +163,81 @@ if option == "Lọc Danh Mục Thầu":
         sel = st.selectbox(f"Chọn {col}", opts)
         if sel != '(Tất cả)':
             df3_temp = df3_temp[df3_temp[col]==sel]
-    # upload
-    uploaded = st.file_uploader(
-        "Tải lên file Danh Mục Mời Thầu (.xlsx)",
-        type=['xlsx']
-    )
-    # fallback path input
-    path_input = None
-    if not uploaded:
-        path_input = st.text_input(
-            "Hoặc nhập đường dẫn file (.xlsx) trên máy chủ", value=""
-        )
-        if path_input:
-            if os.path.exists(path_input) and path_input.lower().endswith('.xlsx'):
-                with open(path_input, 'rb') as f:
-                    buf = BytesIO(f.read())
-                buf.name = os.path.basename(path_input)
-                uploaded = buf
-            else:
-                st.error("Không tìm thấy file hoặc không phải `.xlsx`.")
+    uploaded = st.file_uploader("Tải lên file Danh Mục Mời Thầu (.xlsx)", type=['xlsx'])
     if uploaded:
         display_df, export_df = process_uploaded(uploaded, df3_temp)
         st.success(f"✅ Tổng dòng khớp: {len(display_df)}")
-        # Hiển thị bảng với try/except
-        try:
-            df_str = display_df.fillna('').astype(str)
-            st.dataframe(df_str)
-        except Exception as e:
-            st.error(f"Không thể hiển thị bảng do lỗi: {e}")
-            st.table(display_df.fillna('').astype(str))
-        # lưu state & download
+        st.dataframe(display_df.fillna('').astype(str))
+        # Save for analysis
         st.session_state['filtered_df'] = export_df.copy()
         st.session_state['selected_hospital'] = df3_temp['Bệnh viện/SYT'].iloc[0] if 'Bệnh viện/SYT' in df3_temp.columns else ''
+        # Download filtered file with custom name
         buf = BytesIO()
         with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
             export_df.to_excel(writer, index=False, sheet_name='KetQuaLoc')
         today = datetime.now().strftime('%d.%m.%y')
-        hospital = st.session_state.get('selected_hospital','').replace('/','-')
+        hospital = st.session_state.get('selected_hospital', '').replace('/', '-')
         filename = f"{today}-KQ Loc Thau - {hospital}.xlsx"
         st.download_button('⬇️ Tải File Kết Quả', data=buf.getvalue(), file_name=filename)
 
+# 2. Phân Tích Danh Mục Thầu
 elif option == "Phân Tích Danh Mục Thầu":
     st.header("📊 Phân Tích Danh Mục Thầu")
-    st.info("Chức năng đang xây dựng...")
+    if 'filtered_df' not in st.session_state:
+        st.info("Vui lòng thực hiện bước 'Lọc Danh Mục Thầu' trước.")
+    else:
+        df = st.session_state['filtered_df'].copy()
+        # Force rename to standard columns if misnamed
+        rename_map = {}
+        for c in df.columns:
+            n = normalize_text(c)
+            if 'nhom' in n and 'thuoc' in n:
+                rename_map[c] = 'Nhóm thuốc'
+            if 'trigia' in n or (n.startswith('tri') and 'gia' in n):
+                rename_map[c] = 'Trị giá'
+        if rename_map:
+            df.rename(columns=rename_map, inplace=True)
+        df['Số lượng'] = pd.to_numeric(df.get('Số lượng', 0), errors='coerce').fillna(0)
+        df['Giá kế hoạch'] = pd.to_numeric(df.get('Giá kế hoạch', 0), errors='coerce').fillna(0)
+        df['Trị giá'] = df['Số lượng'] * df['Giá kế hoạch']
+        # Chart 1: Trị giá theo Nhóm thuốc
+        grp_val = df.groupby('Nhóm thuốc')['Trị giá'].sum().reset_index().sort_values('Trị giá', False)
+        fig1 = px.bar(grp_val, x='Nhóm thuốc', y='Trị giá', title='Trị giá theo Nhóm thuốc')
+        st.plotly_chart(fig1, use_container_width=True)
+        # Chart 2: Tỷ trọng trị giá theo đường dùng
+        df['Loại đường dùng'] = df['Đường dùng'].apply(lambda x: 'Tiêm' if 'tiêm' in str(x).lower() else ('Uống' if 'uống' in str(x).lower() else 'Khác'))
+        route_val = df.groupby('Loại đường dùng')['Trị giá'].sum().reset_index()
+        fig2 = px.pie(route_val, names='Loại đường dùng', values='Trị giá', title='Tỷ trọng trị giá theo đường dùng')
+        st.plotly_chart(fig2, use_container_width=True)
+        # Chart 3 & 4: Top 10 hoạt chất theo SL và TG
+        top_qty = df.groupby('Tên hoạt chất')['Số lượng'].sum().reset_index().sort_values('Số lượng', False).head(10)
+        fig3 = px.bar(top_qty, x='Tên hoạt chất', y='Số lượng', title='Top 10 Hoạt chất (SL)')
+        st.plotly_chart(fig3, use_container_width=True)
+        top_val = df.groupby('Tên hoạt chất')['Trị giá'].sum().reset_index().sort_values('Trị giá', False).head(10)
+        fig4 = px.bar(top_val, x='Tên hoạt chất', y='Trị giá', title='Top 10 Hoạt chất (TG)')
+        st.plotly_chart(fig4, use_container_width=True)
+        # Chart 5: Trị giá theo Nhóm điều trị
+        treat_map = {normalize_active(a): grp for a, grp in zip(file4['Hoạt chất'], file4['Nhóm điều trị'])}
+        df['Nhóm điều trị'] = df['Tên hoạt chất'].apply(lambda x: treat_map.get(normalize_active(x), 'Khác'))
+        treat_val = df.groupby('Nhóm điều trị')['Trị giá'].sum().reset_index().sort_values('Trị giá', False)
+        fig5 = px.bar(treat_val, x='Trị giá', y='Nhóm điều trị', orientation='h', title='Trị giá theo Nhóm điều trị')
+        st.plotly_chart(fig5, use_container_width=True)
+        sel_grp = st.selectbox('Chọn nhóm để xem Top 10 sản phẩm', treat_val['Nhóm điều trị'].tolist())
+        if sel_grp:
+            top_prod = df[df['Nhóm điều trị']==sel_grp].groupby('Tên sản phẩm')['Trị giá'].sum().reset_index().sort_values('Trị giá', False).head(10)
+            fig6 = px.bar(top_prod, x='Trị giá', y='Tên sản phẩm', orientation='h', title=f'Top 10 sản phẩm - Nhóm {sel_grp}')
+            st.plotly_chart(fig6, use_container_width=True)
+        # Chart 6: Trị giá theo Khách hàng
+        rep_val = df.groupby('Tên Khách hàng phụ trách triển khai')['Trị giá'].sum().reset_index().sort_values('Trị giá', False)
+        fig7 = px.bar(rep_val, x='Trị giá', y='Tên Khách hàng phụ trách triển khai', orientation='h', title='Trị giá theo Khách hàng phụ trách')
+        st.plotly_chart(fig7, use_container_width=True)
 
+# 3. Phân Tích Danh Mục Trúng Thầu
 elif option == "Phân Tích Danh Mục Trúng Thầu":
     st.header("🏆 Phân Tích Danh Mục Trúng Thầu")
     st.info("Chức năng đang xây dựng...")
 
-else:
+# 4. Đề Xuất Hướng Triển Khai
+elif option == "Đề Xuất Hướng Triển Khai":
     st.header("💡 Đề Xuất Hướng Triển Khai")
     st.info("Chức năng đang xây dựng...")
