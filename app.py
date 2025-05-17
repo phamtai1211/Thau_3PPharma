@@ -172,6 +172,7 @@ if option == "Lọc Danh Mục Thầu":
         st.warning("Không thể upload file do tên file có ký tự đặc biệt.")
 
     # 2. Nếu upload không được (uploaded is None), cho phép nhập đường dẫn
+    path_input = None
     if not uploaded:
         path = st.text_input("Hoặc nhập đường dẫn file (.xlsx) trên máy chủ", "")
     if path:
