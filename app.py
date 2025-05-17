@@ -155,9 +155,10 @@ option = st.sidebar.radio("Chọn chức năng", [
     "Đề Xuất Hướng Triển Khai"
 ])
 
-# 1. Lọc Danh Mục Thầu
+# === 1. Lọc Danh Mục Thầu ===
 if option == "Lọc Danh Mục Thầu":
     st.header("📂 Lọc Danh Mục Thầu")
+    # 1.1. Chuẩn bị dữ liệu file3 và các filter dropdown
     df3_temp = file3.copy()
     for col in ['Miền','Vùng','Tỉnh','Bệnh viện/SYT']:
         opts = ['(Tất cả)'] + sorted(df3_temp[col].dropna().unique())
@@ -165,34 +166,43 @@ if option == "Lọc Danh Mục Thầu":
         if sel != '(Tất cả)':
             df3_temp = df3_temp[df3_temp[col] == sel]
 
-    uploaded = st.file_uploader("Upload file Danh Mục mời thầu", type=['xlsx','xls'])
+    # 1.2. Upload file Danh Mục mời thầu
+    uploaded = st.file_uploader("Tải lên file Danh Mục Mời Thầu (.xlsx)", type=['xlsx','xls'])
     if uploaded:
+        # 1.3. Xử lý và lấy về hai DataFrame: display_df (show) và export_df (xuất file)
         display_df, export_df = process_uploaded(uploaded, df3_temp)
         st.success(f"✅ Tổng dòng khớp: {len(display_df)}")
-        
-        # Hiển thị bảng như cũ
+
+        # 1.4. Hiển thị bảng gốc
         display_ui = display_df.fillna('').astype(str)
         st.write(display_ui)
 
-        # Lưu session để dùng tiếp (Phân Tích / Đề Xuất)
+        # 1.5. Lưu vào session_state để dùng cho Phân tích / Đề xuất
         st.session_state['filtered_display'] = display_df.copy()
         st.session_state['filtered_export']  = export_df.copy()
         st.session_state['file3_temp']       = df3_temp.copy()
 
-        # ==== Fix NameError: khởi tạo df từ display_df ====
+        # 1.6. Khởi tạo df để tính toán
         df = display_df.copy()
-        df['Số lượng']      = pd.to_numeric(df['Số lượng'], errors='coerce').fillna(0)
-        df['Giá kế hoạch']  = pd.to_numeric(df.get('Giá kế hoạch', 0), errors='coerce').fillna(0)
-        df['Trị giá']       = df['Số lượng'] * df['Giá kế hoạch']
+        df['Số lượng']     = pd.to_numeric(df['Số lượng'], errors='coerce').fillna(0)
+        df['Giá kế hoạch'] = pd.to_numeric(df.get('Giá kế hoạch', 0), errors='coerce').fillna(0)
+        df['Trị giá']      = df['Số lượng'] * df['Giá kế hoạch']
 
-        # Hàm định dạng số
+        # 1.7. Hàm định dạng hiển thị số
         def fmt(x):
             if x >= 1e9: return f"{x/1e9:.2f} tỷ"
             if x >= 1e6: return f"{x/1e6:.2f} triệu"
             if x >= 1e3: return f"{x/1e3:.2f} nghìn"
             return str(int(x))
 
-        # Ví dụ: Tổng Trị giá theo Hoạt chất
+        # 1.8. Lọc theo Nhóm điều trị (file4)
+        groups = file4['Nhóm điều trị'].dropna().unique().tolist()
+        sel_g = st.selectbox("Chọn Nhóm điều trị", ['(Tất cả)'] + groups)
+        if sel_g != '(Tất cả)':
+            acts = file4[file4['Nhóm điều trị'] == sel_g]['Tên hoạt chất'].tolist()
+            df = df[df['Tên hoạt chất'].isin(acts)]
+
+        # 1.9. Ví dụ: Tổng Trị giá theo Hoạt chất
         val = (
             df
             .groupby('Tên hoạt chất')['Trị giá']
@@ -204,13 +214,15 @@ if option == "Lọc Danh Mục Thầu":
         st.subheader('Tổng Trị giá theo Hoạt chất')
         st.table(val)
 
-        # … thêm các phân tích khác tương tự tại đây …
+        # … bạn có thể thêm các phân tích khác ở đây tương tự …
 
-        # ==== Nút Tải file Danh Mục Lọc (.xlsx) ====
+        # 1.10. Nút download file Excel kết quả lọc
         from io import BytesIO
         buf = BytesIO()
         with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
-            export_df.to_excel(writer, index=False, sheet_name='DanhMucLoc')
+            st.session_state['filtered_export'].to_excel(
+                writer, index=False, sheet_name='DanhMucLoc'
+            )
         buf.seek(0)
         st.download_button(
             label='⬇️ Tải file Danh Mục Lọc (.xlsx)',
@@ -218,7 +230,6 @@ if option == "Lọc Danh Mục Thầu":
             file_name='DanhMucLoc.xlsx',
             mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
-
 # 3. Phân Tích Danh Mục Trúng Thầu
 elif option == "Phân Tích Danh Mục Trúng Thầu":
     st.header("🏆 Phân Tích Danh Mục Trúng Thầu")
