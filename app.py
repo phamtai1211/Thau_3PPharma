@@ -179,31 +179,6 @@ if option == "Lọc Danh Mục Thầu":
         st.session_state['filtered_export']  = export_df.copy()
         st.session_state['file3_temp']      = df3_temp.copy()
 
-        # Tính toán lại các cột số lượng, giá, trị giá
-        df = display_df.copy()
-        df['Số lượng']     = pd.to_numeric(df['Số lượng'], errors='coerce').fillna(0)
-        df['Giá kế hoạch'] = pd.to_numeric(df.get('Giá kế hoạch', 0), errors='coerce').fillna(0)
-        df['Trị giá']      = df['Số lượng'] * df['Giá kế hoạch']
-
-        # Hàm format hiển thị
-        def fmt(x):
-            if x >= 1e9: return f"{x/1e9:.2f} tỷ"
-            if x >= 1e6: return f"{x/1e6:.2f} triệu"
-            if x >= 1e3: return f"{x/1e3:.2f} nghìn"
-            return str(int(x))
-
-        # Tổng Trị giá theo Hoạt chất
-        val = (
-            df
-            .groupby('Tên hoạt chất')['Trị giá']
-            .sum()
-            .reset_index()
-            .sort_values('Trị giá', ascending=False)
-        )
-        val['Trị giá'] = val['Trị giá'].apply(fmt)
-        st.subheader('Tổng Trị giá theo Hoạt chất')
-        st.table(val)
-
 
 # 2. Phân Tích Danh Mục Thầu
 elif option == "Phân Tích Danh Mục Thầu":
