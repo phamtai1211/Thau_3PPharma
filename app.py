@@ -104,7 +104,7 @@ def process_uploaded(uploaded, df3_temp):
             col_map[c] = 'Tên hoạt chất'
         elif 'nongdo' in n or 'hamluong' in n:
             col_map[c] = 'Nồng độ/hàm lượng'
-        elif 'nhom' in n and 'thuoc' in n:
+        elif ('nhom' in n and 'thuoc' in n) or (n.startswith('nhom') and len(n) <= 7):  # thêm dòng này
             col_map[c] = 'Nhóm thuốc'
         elif 'soluong' in n:
             col_map[c] = 'Số lượng'
