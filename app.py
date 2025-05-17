@@ -5,6 +5,7 @@ import re
 import requests
 import unicodedata
 import zipfile
+import os
 from io import BytesIO
 from openpyxl import load_workbook
 import plotly.express as px
@@ -163,7 +164,26 @@ if option == "Lọc Danh Mục Thầu":
         sel = st.selectbox(f"Chọn {col}", opts)
         if sel != '(Tất cả)':
             df3_temp = df3_temp[df3_temp[col]==sel]
-    uploaded = st.file_uploader("Tải lên file Danh Mục Mời Thầu (.xlsx)", type=['xlsx'])
+    uploaded = None
+    # 1. Thử upload bình thường
+    try:
+        uploaded = st.file_uploader("Tải lên file Danh Mục Mời Thầu (.xlsx)", type=['xlsx'])
+    except Exception:
+        st.warning("Không thể upload file do tên file có ký tự đặc biệt.")
+
+    # 2. Nếu upload không được (uploaded is None), cho phép nhập đường dẫn
+    if not uploaded:
+        path = st.text_input("Hoặc nhập đường dẫn file (.xlsx) trên máy chủ", "")
+    if path:
+        if os.path.exists(path) and path.lower().endswith(".xlsx"):
+            with open(path, "rb") as f:
+                buf = BytesIO(f.read())
+            buf.name = os.path.basename(path)
+            uploaded = buf
+        else:
+            st.error("Không tìm thấy file hoặc không phải .xlsx.")
+
+    # 3. Tiếp tục xử lý nếu có `uploaded`
     if uploaded:
         display_df, export_df = process_uploaded(uploaded, df3_temp)
         st.success(f"✅ Tổng dòng khớp: {len(display_df)}")
