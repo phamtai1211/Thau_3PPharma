@@ -163,57 +163,91 @@ if option == "Lọc Danh Mục Thầu":
         opts = ['(Tất cả)'] + sorted(df3_temp[col].dropna().unique())
         sel = st.selectbox(f"Chọn {col}", opts)
         if sel != '(Tất cả)':
-            df3_temp = df3_temp[df3_temp[col]==sel]
+            df3_temp = df3_temp[df3_temp[col] == sel]
+
     uploaded = st.file_uploader("Tải lên file Danh Mục Mời Thầu (.xlsx)", type=['xlsx'])
     if uploaded:
+        # Xử lý file và gán kết quả
         display_df, export_df = process_uploaded(uploaded, df3_temp)
         st.success(f"✅ Tổng dòng khớp: {len(display_df)}")
-        # Prepare display: render as styled HTML table with horizontal scroll
+
+        # Hiển thị bảng như cũ
         display_ui = display_df.fillna('').astype(str)
-        # Display with st.write (HTML table) to preserve styling
         st.write(display_ui)
+
+        # Lưu vào session để dùng cho phần khác
         st.session_state['filtered_display'] = display_df.copy()
-        df['Số lượng'] = pd.to_numeric(df['Số lượng'], errors='coerce').fillna(0)
-        df['Giá kế hoạch'] = pd.to_numeric(df.get('Giá kế hoạch',0), errors='coerce').fillna(0)
-        df['Trị giá'] = df['Số lượng'] * df['Giá kế hoạch']
+        st.session_state['filtered_export']  = export_df.copy()
+        st.session_state['file3_temp']      = df3_temp.copy()
+
+        # Gán biến df để chuyển kiểu và tính toán
+        df = display_df.copy()
+        df['Số lượng']       = pd.to_numeric(df['Số lượng'], errors='coerce').fillna(0)
+        df['Giá kế hoạch']   = pd.to_numeric(df.get('Giá kế hoạch', 0), errors='coerce').fillna(0)
+        df['Trị giá']        = df['Số lượng'] * df['Giá kế hoạch']
+
+        # Hàm format số
         def fmt(x):
-            if x>=1e9: return f"{x/1e9:.2f} tỷ"
-            if x>=1e6: return f"{x/1e6:.2f} triệu"
-            if x>=1e3: return f"{x/1e3:.2f} nghìn"
+            if x >= 1e9: return f"{x/1e9:.2f} tỷ"
+            if x >= 1e6: return f"{x/1e6:.2f} triệu"
+            if x >= 1e3: return f"{x/1e3:.2f} nghìn"
             return str(int(x))
+
+        # Lọc theo nhóm điều trị nếu cần
         groups = file4['Nhóm điều trị'].dropna().unique()
-        sel_g = st.selectbox("Chọn Nhóm điều trị", ['(Tất cả)']+list(groups))
-        if sel_g!='(Tất cả)':
-            acts = file4[file4['Nhóm điều trị']==sel_g]['Tên hoạt chất']
+        sel_g = st.selectbox("Chọn Nhóm điều trị", ['(Tất cả)'] + list(groups))
+        if sel_g != '(Tất cả)':
+            acts = file4[file4['Nhóm điều trị'] == sel_g]['Tên hoạt chất']
             df = df[df['Tên hoạt chất'].isin(acts)]
-        val = df.groupby('Tên hoạt chất')['Trị giá'].sum().reset_index().sort_values('Trị giá',False)
+
+        # Ví dụ: tính “Trị giá” theo hoạt chất và hiển thị
+        val = df.groupby('Tên hoạt chất')['Trị giá'].sum().reset_index().sort_values('Trị giá', False)
         val['Trị giá'] = val['Trị giá'].apply(fmt)
-        qty = df.groupby('Tên hoạt chất')['Số lượng'].sum().reset_index().sort_values('Số lượng',False)
-        qty['Số lượng'] = qty['Số lượng'].apply(fmt)
         st.subheader('Tổng Trị giá theo Hoạt chất')
         st.table(val)
-        st.subheader('Tổng Số lượng theo Hoạt chất')
-        st.table(qty)
-        st.subheader('Top 10 theo Đường dùng')
-        for r in ['tiêm','uống']:
-            sub = df[df['Đường dùng'].str.contains(r, case=False, na=False)]
-            topq = sub.groupby('Tên hoạt chất')['Số lượng'].sum().nlargest(10).reset_index()
-            topt = sub.groupby('Tên hoạt chất')['Trị giá'].sum().nlargest(10).reset_index()
-            topq['Số lượng'] = topq['Số lượng'].apply(fmt)
-            topt['Trị giá'] = topt['Trị giá'].apply(fmt)
-            st.markdown(f"**{r.capitalize()} - Top 10 SL**")
-            st.table(topq)
-            st.markdown(f"**{r.capitalize()} - Top 10 TG**")
-            st.table(topt)
-        total_sp = df['Tên sản phẩm'].nunique()
-        cust = df.groupby('Tên Khách hàng phụ trách triển khai').agg(
-            SL=('Số lượng','sum'), TG=('Trị giá','sum'), SP=('Tên sản phẩm', pd.Series.nunique)
-        ).reset_index()
-        cust['Tỷ lệ SP'] = (cust['SP']/total_sp*100).round(2).astype(str) + '%'
-        cust['SL'] = cust['SL'].apply(fmt)
-        cust['TG'] = cust['TG'].apply(fmt)
-        st.subheader('Phân tích theo Khách hàng phụ trách')
-        st.table(cust)
+
+# 2. Phân Tích Danh Mục Thầu
+elif option == "Phân Tích Danh Mục Thầu":
+    st.header("📊 Phân Tích Danh Mục Thầu")
+    # Kiểm tra xem đã có dữ liệu từ bước Lọc chưa
+    if 'filtered_export' in st.session_state:
+        df_exp     = st.session_state['filtered_export']
+        file3_temp = st.session_state['file3_temp']
+
+        # Ví dụ: Tổng hợp số lượng & trị giá theo BV/SYT và hoạt chất
+        summary = (
+            df_exp
+            .groupby(['Bệnh viện/SYT', 'Tên hoạt chất'])
+            .agg(
+                SL=('Số lượng', 'sum'),
+                TG=('Trị giá', 'sum')
+            )
+            .reset_index()
+        )
+
+        # Hiển thị kết quả
+        st.subheader("Tổng SL & Trị giá theo BV/SYT – Hoạt chất")
+        st.dataframe(summary)
+
+        # Cho phép tải về Excel
+        import io
+        def to_excel_bytes(df):
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df.to_excel(writer, index=False)
+            return output.getvalue()
+
+        to_download = to_excel_bytes(summary)
+        st.download_button(
+            label="📥 Tải kết quả phân tích (.xlsx)",
+            data=to_download,
+            file_name="phan_tich_danh_muc_thau.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+        # (nếu cần, bạn có thể thêm xuất Word tương tự)
+    else:
+        st.warning("⚠️ Bạn phải chạy “Lọc Danh Mục Thầu” trước để có dữ liệu phân tích.")
 
 # 3. Phân Tích Danh Mục Trúng Thầu
 elif option == "Phân Tích Danh Mục Trúng Thầu":
