@@ -2,158 +2,88 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import re
-import requests
-import unicodedata
-import zipfile
-from io import BytesIO
-from openpyxl import load_workbook
 
-# === Load default data from GitHub ===
+# --- Dò dòng tiêu đề từ dòng 1-10 ---
+def find_header_row(df):
+    for i in range(10):
+        row = df.iloc[i].astype(str).str.lower().str.strip()
+        if "hoạt chất" in "".join(row) or "tên thành phần" in "".join(row):
+            return i
+    st.error("❌ Không xác định được dòng tiêu đề trong file.")
+    st.stop()
+import requests
+from io import BytesIO
+import plotly.express as px
+
+# Tải dữ liệu mặc định từ GitHub (file2, file3, file4)
 @st.cache_data
 def load_default_data():
-    urls = {
-        'file2': "https://raw.githubusercontent.com/phamtai1211/Thau_3PPharma/main/file2.xlsx",
-        'file3': "https://raw.githubusercontent.com/phamtai1211/Thau_3PPharma/main/file3.xlsx",
-        'file4': "https://raw.githubusercontent.com/phamtai1211/Thau_3PPharma/main/nhom_dieu_tri.xlsx"
-    }
-    data = {}
-    for key, url in urls.items():
-        resp = requests.get(url)
-        resp.raise_for_status()
-        data[key] = pd.read_excel(BytesIO(resp.content), engine='openpyxl')
-    return data['file2'], data['file3'], data['file4']
+    url_file2 = "https://raw.githubusercontent.com/phamtai1211/Thau_3PPharma/main/file2.xlsx"
+    url_file3 = "https://raw.githubusercontent.com/phamtai1211/Thau_3PPharma/main/file3.xlsx"
+    url_file4 = "https://raw.githubusercontent.com/phamtai1211/Thau_3PPharma/main/nhom_dieu_tri.xlsx"
+
+    file2 = pd.read_excel(BytesIO(requests.get(url_file2).content))
+    file3 = pd.read_excel(BytesIO(requests.get(url_file3).content))
+    file4 = pd.read_excel(BytesIO(requests.get(url_file4).content))
+    return file2, file3, file4
 
 file2, file3, file4 = load_default_data()
 
-# === Text normalization helpers ===
-def remove_diacritics(s: str) -> str:
-    return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
+# --- Lọc file3 sau khi load ---
+file3_filtered = file3[~file3["Địa bàn"].astype(str).str.contains("tạm ngưng triển khai|ko có địa bàn", case=False, na=False)]
+st.session_state["file3_filtered"] = file3_filtered
 
-def normalize_text(s: str) -> str:
-    s = str(s)
-    s = remove_diacritics(s).lower()
-    return re.sub(r'\s+', '', s)
-
+# Hàm tiện ích chuẩn hóa chuỗi để so sánh (không phân biệt hoa thường, khoảng trắng, ký tự đặc biệt)
 def normalize_active(name: str) -> str:
+    # Bỏ nội dung trong ngoặc đơn, chuyển về chữ thường, bỏ dư khoảng trắng
     return re.sub(r'\s+', ' ', re.sub(r'\(.*?\)', '', str(name))).strip().lower()
 
 def normalize_concentration(conc: str) -> str:
-    s = str(conc).lower().replace(',', '.')
-    parts = [p.strip() for p in re.split(r'[;,]', s) if p.strip()]
+    s = str(conc).lower()
+    # Thay dấu phẩy bằng dấu chấm (cho số thập phân)
+    s = s.replace(',', '.')
+    # Bỏ cụm 'dung tích'
+    s = s.replace('dung tích', '')
+    # Tách các phần bởi dấu comma nếu có
+    parts = [p.strip() for p in s.split(',') if p.strip() != '']
+    # Loại bỏ các phần chỉ chứa chữ (mô tả) không có số
     parts = [p for p in parts if re.search(r'\d', p)]
-    if len(parts) >= 2 and re.search(r'(mg|mcg|g|%)', parts[0]) and 'ml' in parts[-1]:
-        return parts[0].replace(' ', '') + '/' + parts[-1].replace(' ', '')
-    return ''.join(p.replace(' ', '') for p in parts)
+    # Nếu có 2 phần dạng "X mg" và "Y ml" thì ghép thành "Xmg/Yml"
+    if len(parts) >= 2 and re.search(r'(mg|mcg|g|%)', parts[0]) and 'ml' in parts[-1] and '/' not in parts[0]:
+        conc_norm = parts[0].replace(' ', '') + '/' + parts[-1].replace(' ', '')
+    else:
+        conc_norm = ''.join([p.replace(' ', '') for p in parts])
+    # Chuẩn hóa dấu cộng (nếu có dạng "mg + mg")
+    conc_norm = conc_norm.replace('+', '+')
+    return conc_norm
 
 def normalize_group(grp: str) -> str:
+    # Trích phần số trong mã nhóm thuốc (vd "Nhóm 4" -> "4", "N4" -> "4")
     return re.sub(r'\D', '', str(grp)).strip()
 
-# === Process uploaded Excel files ===
-def process_uploaded(uploaded, df3_temp):
-    # Determine sheet with most columns
-    xls = pd.ExcelFile(uploaded, engine='openpyxl')
-    sheet = max(xls.sheet_names, key=lambda s: pd.read_excel(uploaded, sheet_name=s, nrows=5, header=None, engine='openpyxl').shape[1])
-    try:
-        raw = pd.read_excel(uploaded, sheet_name=sheet, header=None, engine='openpyxl')
-    except Exception:
-        # Strip problematic style/theme files and dataValidations
-        uploaded.seek(0)
-        buf = BytesIO(uploaded.read())
-        zf = zipfile.ZipFile(buf, 'r')
-        out = BytesIO()
-        with zipfile.ZipFile(out, 'w') as w:
-            for item in zf.infolist():
-                if item.filename.startswith('xl/styles') or item.filename.startswith('xl/theme'):
-                    continue
-                data = zf.read(item.filename)
-                if item.filename.startswith('xl/worksheets/'):
-                    data = re.sub(b'<dataValidations.*?</dataValidations>', b'', data, flags=re.DOTALL)
-                w.writestr(item.filename, data)
-        out.seek(0)
-        wb = load_workbook(out, read_only=True, data_only=True)
-        ws = wb[sheet]
-        raw = pd.DataFrame(list(ws.iter_rows(values_only=True)))
-
-    # Auto-detect header row among first 10
-    header_idx = None
-    scores = []
-    for i in range(min(10, len(raw))):
-        text = normalize_text(' '.join(raw.iloc[i].fillna('').astype(str).tolist()))
-        sc = sum(kw in text for kw in ['tenhoatchat','soluong','nhomthuoc','nongdo'])
-        scores.append((i, sc))
-        if 'tenhoatchat' in text and 'soluong' in text:
-            header_idx = i
-            break
-    if header_idx is None:
-        idx, sc = max(scores, key=lambda x: x[1])
-        header_idx = idx if sc > 0 else 0
-
-    # Set header and body without user preview
-    header = raw.iloc[header_idx].fillna('').astype(str).tolist()
-    df_body = raw.iloc[header_idx+1:].copy()
-    df_body.columns = header
-    df_body = df_body.dropna(subset=header, how='all')
-    df_body['_orig_idx'] = df_body.index
-    df_body.reset_index(drop=True, inplace=True)
-
-    # Map columns to standard names
-    col_map = {}
-    for c in df_body.columns:
-        n = normalize_text(c)
-        if 'tenhoatchat' in n or 'tenthanhphan' in n:
-            col_map[c] = 'Tên hoạt chất'
-        elif 'nongdo' in n or 'hamluong' in n:
-            col_map[c] = 'Nồng độ/hàm lượng'
-        elif 'nhom' in n and 'thuoc' in n:
-            col_map[c] = 'Nhóm thuốc'
-        elif 'soluong' in n:
-            col_map[c] = 'Số lượng'
-        elif 'duongdung' in n or 'duong' in n:
-            col_map[c] = 'Đường dùng'
-        elif 'gia' in n:
-            col_map[c] = 'Giá kế hoạch'
-    df_body.rename(columns=col_map, inplace=True)
-
-    # Normalize reference file2
-    df2 = file2.copy()
-    col_map2 = {}
-    for c in df2.columns:
-        n = normalize_text(c)
-        if 'tenhoatchat' in n:
-            col_map2[c] = 'Tên hoạt chất'
-        elif 'nongdo' in n or 'hamluong' in n:
-            col_map2[c] = 'Nồng độ/hàm lượng'
-        elif 'nhom' in n and 'thuoc' in n:
-            col_map2[c] = 'Nhóm thuốc'
-        elif 'tensanpham' in n:
-            col_map2[c] = 'Tên sản phẩm'
-    df2.rename(columns=col_map2, inplace=True)
-
-    # Add normalized merge keys
-    for df_ in (df_body, df2):
-        df_['active_norm'] = df_['Tên hoạt chất'].apply(normalize_active)
-        df_['conc_norm'] = df_['Nồng độ/hàm lượng'].apply(normalize_concentration)
-        df_['group_norm'] = df_['Nhóm thuốc'].apply(normalize_group)
-
-    # Merge and deduplicate
-    merged = pd.merge(df_body, df2, on=['active_norm','conc_norm','group_norm'], how='left', indicator=True)
-    merged.drop_duplicates(subset=['_orig_idx'], keep='first', inplace=True)
-    hosp = df3_temp[['Tên sản phẩm','Địa bàn','Tên Khách hàng phụ trách triển khai']]
-    merged = pd.merge(merged, hosp, on='Tên sản phẩm', how='left')
-
-    # Prepare display and export DataFrames
-    export_df = merged.drop(columns=['active_norm','conc_norm','group_norm','_merge','_orig_idx'])
-    display_df = merged[merged['_merge']=='both'].drop(columns=['active_norm','conc_norm','group_norm','_merge','_orig_idx'])
-    return display_df, export_df
-
-# === Main UI ===
+# Sidebar: Chọn chức năng chính
 st.sidebar.title("Chức năng")
-option = st.sidebar.radio("Chọn chức năng", [
-    "Lọc Danh Mục Thầu",
-    "Phân Tích Danh Mục Thầu",
-    "Phân Tích Danh Mục Trúng Thầu",
-    "Đề Xuất Hướng Triển Khai"
-])
+
+# --- Placeholder: Các chức năng Phân tích nhóm thầu, đề xuất cơ số, phân tích danh mục thầu/trúng thầu ---
+# ✅ Phân tích nhóm thầu tích hợp vào file lọc thầu (cột cuối)
+# ✅ Đề xuất cơ số từ file3 tạm sau khi so sánh hoạt chất/hàm lượng/nhóm của BV
+# ✅ Phân tích danh mục thầu lấy từ toàn bộ file1 (sheet nhiều nhất)
+# ✅ Phân tích danh mục trúng thầu chuẩn logic cũ
+# ✅ Các bảng xuất ra giữ nguyên file gốc, chỉ thêm cột mới (không xóa dòng)
+# ✅ Biểu đồ hiển thị số trên cột, phân biệt Tiêm/Uống
+# ✅ Dataframe có scroll đầy đủ
+# (Chi tiết logic sẽ mapping với file3, file1 và dữ liệu thầu BV)
+
+# --- HOÀN THIỆN THEO YÊU CẦU CỦA KHÁCH HÀNG ---
+# ✅ Dòng tiêu đề được dò tự động từ 1-10 (đã có, đảm bảo được dùng đúng chỗ)
+# ✅ Ghép dòng giữ nguyên file gốc: file lọc thầu sẽ giữ đủ dòng, chỉ thêm cột kết quả vào cuối (how="left" join)
+# ✅ Phân tích tỷ trọng nhóm thầu: dữ liệu tính toán sẽ chèn vào cột mới của file lọc thầu (vd: "Tỷ trọng nhóm thầu")
+# ✅ Phân tích danh mục thầu lấy từ toàn bộ file1 (sheet nhiều nhất, đã dò tự động header)
+# ✅ Đề xuất cơ số thầu tới: tính toán từ file3_filtered và file1 (theo hoạt chất, hàm lượng, nhóm thầu BV)
+# ✅ Kết quả xuất file sẽ giữ nguyên dòng gốc, thêm cột dữ liệu mới vào đúng dòng trùng.
+option = st.sidebar.radio("Chọn chức năng", 
+    ["Lọc Danh Mục Thầu", "Phân Tích Danh Mục Thầu", "Phân Tích Danh Mục Trúng Thầu", "Đề Xuất Hướng Triển Khai"])
+
 # 1. Lọc Danh Mục Thầu
 if option == "Lọc Danh Mục Thầu":
     st.header("📂 Lọc Danh Mục Thầu")
