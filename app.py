@@ -8,6 +8,7 @@ import zipfile
 from io import BytesIO
 from openpyxl import load_workbook
 import plotly.express as px
+from datetime import datetime
 
 # === Load default data from GitHub ===
 @st.cache_data
@@ -170,11 +171,14 @@ if option == "Lọc Danh Mục Thầu":
         # Save for analysis
         st.session_state['filtered_df'] = export_df.copy()
         st.session_state['selected_hospital'] = df3_temp['Bệnh viện/SYT'].iloc[0] if 'Bệnh viện/SYT' in df3_temp.columns else ''
-        # Download filtered file
+        # Download filtered file with custom name
         buf = BytesIO()
         with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
             export_df.to_excel(writer, index=False, sheet_name='KetQuaLoc')
-        st.download_button('⬇️ Tải File Kết Quả', data=buf.getvalue(), file_name='Ketqua_loc.xlsx')
+        today = datetime.now().strftime('%d.%m.%y')
+        hospital = st.session_state.get('selected_hospital', '').replace('/', '-')
+        filename = f"{today}-KQ Loc Thau - {hospital}.xlsx"
+        st.download_button('⬇️ Tải File Kết Quả', data=buf.getvalue(), file_name=filename)
 
 # 2. Phân Tích Danh Mục Thầu
 elif option == "Phân Tích Danh Mục Thầu":
@@ -183,8 +187,18 @@ elif option == "Phân Tích Danh Mục Thầu":
         st.info("Vui lòng thực hiện bước 'Lọc Danh Mục Thầu' trước.")
     else:
         df = st.session_state['filtered_df'].copy()
-        df['Số lượng'] = pd.to_numeric(df['Số lượng'], errors='coerce').fillna(0)
-        df['Giá kế hoạch'] = pd.to_numeric(df.get('Giá kế hoạch',0), errors='coerce').fillna(0)
+        # Force rename to standard columns if misnamed
+        rename_map = {}
+        for c in df.columns:
+            n = normalize_text(c)
+            if 'nhom' in n and 'thuoc' in n:
+                rename_map[c] = 'Nhóm thuốc'
+            if 'trigia' in n or (n.startswith('tri') and 'gia' in n):
+                rename_map[c] = 'Trị giá'
+        if rename_map:
+            df.rename(columns=rename_map, inplace=True)
+        df['Số lượng'] = pd.to_numeric(df.get('Số lượng', 0), errors='coerce').fillna(0)
+        df['Giá kế hoạch'] = pd.to_numeric(df.get('Giá kế hoạch', 0), errors='coerce').fillna(0)
         df['Trị giá'] = df['Số lượng'] * df['Giá kế hoạch']
         # Chart 1: Trị giá theo Nhóm thuốc
         grp_val = df.groupby('Nhóm thuốc')['Trị giá'].sum().reset_index().sort_values('Trị giá', False)
