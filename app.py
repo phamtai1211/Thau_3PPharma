@@ -177,7 +177,15 @@ if option == "Lọc Danh Mục Thầu":
     if uploaded:
         display_df, export_df = process_uploaded(uploaded, df3_temp)
         st.success(f"✅ Tổng dòng khớp: {len(display_df)}")
-        st.dataframe(display_df.fillna('').astype(str))
+        # Chuyển mọi giá trị trong DataFrame về chuỗi để tránh lỗi ValueError khi hiển thị
+        if display_df is not None and not display_df.empty:
+            display_df_fix = display_df.copy()
+            for col in display_df_fix.columns:
+                display_df_fix[col] = display_df_fix[col].apply(lambda x: str(x) if not pd.isnull(x) else '')
+            st.dataframe(display_df_fix)
+        else:
+            st.info("Không có dòng nào khớp hoặc dữ liệu rỗng.")
+
         # Save for analysis
         st.session_state['filtered_df'] = export_df.copy()
         st.session_state['selected_hospital'] = df3_temp['Bệnh viện/SYT'].iloc[0] if 'Bệnh viện/SYT' in df3_temp.columns else ''
