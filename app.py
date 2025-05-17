@@ -176,14 +176,14 @@ if option == "Lọc Danh Mục Thầu":
     uploaded = st.file_uploader("Tải lên file Danh Mục Mời Thầu (.xlsx)", type=['xlsx'])
     if uploaded:
         def safe_str(x):
-    try:
-        # Nếu là NaN hoặc None thì trả về rỗng
-        if pd.isnull(x):
-            return ''
+            try:
+            # Nếu là NaN hoặc None thì trả về rỗng
+                if pd.isnull(x):
+                    return ''
         # Nếu là list, dict, object... thì chuyển sang chuỗi an toàn
-        return str(x)
-    except Exception:
-        return ''
+                return str(x)
+            except Exception:
+                return ''
         # Chuyển mọi giá trị trong DataFrame về chuỗi để tránh lỗi ValueError khi hiển thị
         if display_df is not None and not display_df.empty:
             display_df_fix = display_df.copy()
