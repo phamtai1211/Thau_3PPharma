@@ -23,13 +23,11 @@ def process_uploaded(uploaded, df3_temp):
     """
     Xử lý file Danh Mục Mời Thầu:
     - Đọc file
-    - Lọc các dòng tồn tại trong df3_temp (dựa trên cột 'Bệnh viện/SYT')
+    - Lọc các dòng theo cột 'Bệnh viện/SYT'
     """
     df = read_excel_file(uploaded)
-    # Giả sử file Excel có cột 'Bệnh viện/SYT'
     display_df = df[df['Bệnh viện/SYT'].isin(df3_temp['Bệnh viện/SYT'])]
-    export_df = display_df.copy()
-    return display_df, export_df
+    return display_df, display_df.copy()
 
 
 def to_excel_bytes(df_):
@@ -40,30 +38,23 @@ def to_excel_bytes(df_):
     return output.getvalue()
 
 # --- Load reference files ---
-st.sidebar.header("🔧 Tải các file tham khảo")
+st.sidebar.header("🔧 Tải file tham khảo")
 file3 = st.sidebar.file_uploader(
-    "File 3: Danh sách triển khai (Miền, Vùng, Tỉnh, BV/SYT...)",
-    type=['xlsx'], key="file3"
+    "File 3: Danh sách triển khai (Miền, Vùng, Tỉnh, BV/SYT)", type=['xlsx'], key="file3"
 )
 file4 = st.sidebar.file_uploader(
     "File 4: Danh sách Hoạt chất – Nhóm điều trị", type=['xlsx'], key="file4"
 )
-
 if not file3 or not file4:
-    st.sidebar.warning("Vui lòng upload đủ cả File 3 và File 4 ở trên.")
+    st.sidebar.warning("Vui lòng upload File 3 và File 4.")
     st.stop()
 
-# Đọc file tham khảo
 df3_ref = pd.read_excel(file3)
 df4_ref = pd.read_excel(file4)
 
 # --- Main UI ---
 st.title("🏥 Ứng dụng Phân tích Đấu thầu Thuốc")
-menu = [
-    "Lọc Danh Mục Thầu",
-    "Phân Tích Danh Mục Thầu",
-    "Phân Tích Danh Mục Trúng Thầu"
-]
+menu = ["Lọc Danh Mục Thầu", "Phân Tích Danh Mục Thầu", "Phân Tích Danh Mục Trúng Thầu"]
 option = st.sidebar.selectbox("Chọn chức năng", menu)
 
 # 1. Lọc Danh Mục Thầu
@@ -76,42 +67,34 @@ if option == "Lọc Danh Mục Thầu":
         if sel != '(Tất cả)':
             df3_temp = df3_temp[df3_temp[col] == sel]
 
-    uploaded = st.file_uploader(
-        "Tải lên file Danh Mục Mời Thầu (.xlsx)", type=['xlsx']
-    )
+    uploaded = st.file_uploader("Tải lên file Danh Mục Mời Thầu (.xlsx)", type=['xlsx'])
     if uploaded:
         display_df, export_df = process_uploaded(uploaded, df3_temp)
         st.success(f"✅ Tổng dòng khớp: {len(display_df)}")
+        st.write(display_df.fillna('').astype(str))
 
-        # Hiển thị bảng gốc (style giống cũ)
-        display_ui = display_df.fillna('').astype(str)
-        st.write(display_ui)
-
-        # Lưu session để dùng phía sau
+        # Lưu session
         st.session_state['filtered_display'] = display_df.copy()
         st.session_state['filtered_export']  = export_df.copy()
         st.session_state['file3_temp']      = df3_temp.copy()
 
-        # --- Tính toán số liệu ---
+        # Chuẩn bị tính toán
         df_calc = display_df.copy()
         df_calc.columns = df_calc.columns.str.strip()
-        df_calc['Số lượng']     = pd.to_numeric(
-            df_calc.get('Số lượng', 0), errors='coerce'
-        ).fillna(0)
-        df_calc['Giá kế hoạch'] = pd.to_numeric(
-            df_calc.get('Giá kế hoạch', 0), errors='coerce'
-        ).fillna(0)
+        df_calc['Số lượng']     = pd.to_numeric(df_calc.get('Số lượng',0), errors='coerce').fillna(0)
+        df_calc['Giá kế hoạch'] = pd.to_numeric(df_calc.get('Giá kế hoạch',0), errors='coerce').fillna(0)
         df_calc['Trị giá']      = df_calc['Số lượng'] * df_calc['Giá kế hoạch']
 
-        # Hàm format hiển thị
+        # Hàm format
         def fmt(x):
             if x >= 1e9: return f"{x/1e9:.2f} tỷ"
             if x >= 1e6: return f"{x/1e6:.2f} triệu"
             if x >= 1e3: return f"{x/1e3:.2f} nghìn"
             return str(int(x))
 
-        # Tổng Trị giá theo Hoạt chất
-        if 'Tên hoạt chất' in df_calc.columns:
+        # Tính và hiển thị Tổng Trị giá theo Hoạt chất
+        st.subheader('Tổng Trị giá theo Hoạt chất')
+        try:
             val = (
                 df_calc
                 .groupby('Tên hoạt chất')['Trị giá']
@@ -120,19 +103,17 @@ if option == "Lọc Danh Mục Thầu":
                 .sort_values('Trị giá', ascending=False)
             )
             val['Trị giá'] = val['Trị giá'].apply(fmt)
-            st.subheader('Tổng Trị giá theo Hoạt chất')
             st.table(val)
-
-            # Nút download kết quả
+            # Download
             excel_data = to_excel_bytes(val)
             st.download_button(
-                label="📥 Tải kết quả tổng Trị giá (.xlsx)",
+                label="📥 Tải kết quả (.xlsx)",
                 data=excel_data,
-                file_name="tong_tri_gia_theo_hoatchat.xlsx",
+                file_name="tong_tri_gia.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-        else:
-            st.warning("⚠️ Không tìm thấy cột 'Tên hoạt chất'.")
+        except KeyError as e:
+            st.warning(f"⚠️ Không thể tính Tổng Trị giá: thiếu cột {e}")
 
 # 2. Phân Tích Danh Mục Thầu
 elif option == "Phân Tích Danh Mục Thầu":
@@ -140,32 +121,29 @@ elif option == "Phân Tích Danh Mục Thầu":
     if 'filtered_export' in st.session_state:
         df_exp = st.session_state['filtered_export']
         file3_temp = st.session_state['file3_temp']
-        summary = (
-            df_exp
-            .groupby(['Bệnh viện/SYT','Tên hoạt chất'])
-            .agg(
-                SL=('Số lượng','sum'),
-                TG=('Trị giá','sum')
+        try:
+            summary = (
+                df_exp
+                .groupby(['Bệnh viện/SYT','Tên hoạt chất'])
+                .agg(SL=('Số lượng','sum'), TG=('Trị giá','sum'))
+                .reset_index()
             )
-            .reset_index()
-        )
-        st.subheader("Tổng SL & Trị giá theo BV/SYT – Hoạt chất")
-        st.dataframe(summary)
-
-        excel_data = to_excel_bytes(summary)
-        st.download_button(
-            label="📥 Tải kết quả phân tích (.xlsx)",
-            data=excel_data,
-            file_name="phan_tich_danh_muc_thau.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+            st.dataframe(summary)
+            excel_data = to_excel_bytes(summary)
+            st.download_button(
+                label="📥 Tải phân tích (.xlsx)", data=excel_data,
+                file_name="phan_tich.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        except KeyError as e:
+            st.warning(f"⚠️ Thiếu cột phân tích: {e}")
     else:
-        st.warning("⚠️ Bạn phải chạy “Lọc Danh Mục Thầu” trước.")
+        st.warning("⚠️ Bạn chưa chạy Lọc Danh Mục Thầu.")
 
 # 3. Phân Tích Danh Mục Trúng Thầu
 elif option == "Phân Tích Danh Mục Trúng Thầu":
     st.header("🔍 Phân Tích Danh Mục Trúng Thầu")
-    st.info("Chức năng đang được xây dựng..."
+    st.info("Chức năng đang xây dựng...")
 
 # 4. Đề Xuất Hướng Triển Khai
 elif option == "Đề Xuất Hướng Triển Khai":
