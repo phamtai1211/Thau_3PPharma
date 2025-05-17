@@ -202,21 +202,61 @@ if option == "Lọc Danh Mục Thầu":
 # 2. Phân Tích Danh Mục Thầu
 elif option == "Phân Tích Danh Mục Thầu":
     st.header("📊 Phân Tích Danh Mục Thầu")
+    # 2.1. Lấy data đã lọc
     df = st.session_state.get('filtered_display', pd.DataFrame()).copy()
-    file4 = st.session_state.get('file4', pd.DataFrame())  # hoặc biến chứa file4 của bạn
+    if df.empty:
+        st.warning("Bạn chưa thực hiện lọc danh mục. Vui lòng vào tab 'Lọc Danh Mục Thầu' trước.")
+    else:
+        # 2.2. Định nghĩa hàm format số
+        def fmt(x):
+            if x >= 1e9: return f"{x/1e9:.2f} tỷ"
+            if x >= 1e6: return f"{x/1e6:.2f} triệu"
+            if x >= 1e3: return f"{x/1e3:.2f} nghìn"
+            return str(int(x))
+        
+        # 2.3. Chọn Nhóm điều trị
+        groups = file4['Nhóm điều trị'].dropna().unique().tolist()
+        sel_g = st.selectbox("Chọn Nhóm điều trị", ['(Tất cả)'] + groups)
+        if sel_g != '(Tất cả)':
+            acts = file4[file4['Nhóm điều trị'] == sel_g]['Tên hoạt chất']
+            df = df[df['Tên hoạt chất'].isin(acts)]
 
-    # đây mới là chỗ phù hợp để lọc theo Nhóm điều trị
-    groups = file4['Nhóm điều trị'].dropna().unique().tolist()
-    sel_g = st.selectbox("Chọn Nhóm điều trị", ['(Tất cả)'] + groups)
-    if sel_g != '(Tất cả)':
-        acts = file4[file4['Nhóm điều trị'] == sel_g]['Tên hoạt chất']
-        df = df[df['Tên hoạt chất'].isin(acts)]
+        # 2.4. Tính và hiển thị Tổng Trị giá theo Hoạt chất
+        val = (
+            df
+            .groupby('Tên hoạt chất')['Trị giá']
+            .sum()
+            .reset_index()
+            .sort_values('Trị giá', ascending=False)
+        )
+        val['Trị giá'] = val['Trị giá'].apply(fmt)
+        st.subheader("Tổng Trị giá theo Hoạt chất")
+        st.table(val)
 
-    # sau đó chạy các phân tích: tổng trị giá, tỉ trọng, biểu đồ…
-    # ví dụ:
-    total = df['Trị giá'].sum()
-    st.metric("Tổng Trị giá", fmt(total))
-    # … các báo cáo chi tiết khác …
+        # 2.5. Tính và hiển thị Tỷ trọng số lượng theo Hoạt chất
+        qty = (
+            df
+            .groupby('Tên hoạt chất')['Số lượng']
+            .sum()
+            .reset_index()
+            .sort_values('Số lượng', ascending=False)
+        )
+        total_qty = qty['Số lượng'].sum()
+        qty['Tỷ trọng'] = qty['Số lượng'].apply(lambda x: f"{x/total_qty:.2%}")
+        st.subheader("Tỷ trọng số lượng theo Hoạt chất")
+        st.table(qty)
+
+        # 2.6. Hiển thị tổng số liệu chính
+        st.subheader("Chỉ số tổng quan")
+        st.metric("Tổng Trị giá", fmt(df['Trị giá'].sum()))
+        st.metric("Tổng Số lượng", int(df['Số lượng'].sum()))
+        ```
+
+**Hướng dẫn**  
+1. Xóa khối cũ `elif option == "Phân Tích Danh Mục Thầu":` đến dòng trước `elif option == "Đề Xuất":`.  
+2. Dán đoạn trên với **indent 4 spaces**.  
+3. Chạy lại app, phần phân tích sẽ hiển thị dropdown “Chọn Nhóm điều trị” đúng chỗ và các bảng báo cáo.
+
 
 # 3. Phân Tích Danh Mục Trúng Thầu
 elif option == "Phân Tích Danh Mục Trúng Thầu":
