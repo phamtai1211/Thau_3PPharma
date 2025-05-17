@@ -100,18 +100,28 @@ def process_uploaded(uploaded, df3_temp):
     col_map = {}
     for c in df_body.columns:
         n = normalize_text(c)
-        if 'tenhoatchat' in n or 'tenthanhphan' in n:
+        # Tên hoạt chất / Tên thành phần
+        if ('tenhoatchat' in n) or ('tenthanhphan' in n) or ('hoatchat' in n and 'ten' in n) or ('thanhphan' in n):
             col_map[c] = 'Tên hoạt chất'
-        elif 'nongdo' in n or 'hamluong' in n:
+        # Nồng độ/Hàm lượng/các kiểu ghi khác
+        elif ('nongdo' in n) or ('hamluong' in n) or ('nongdo' in n and 'hamluong' in n) or ('nong do' in c.lower()) or ('hàm lượng' in c.lower()):
             col_map[c] = 'Nồng độ/hàm lượng'
-        elif ('nhom' in n and 'thuoc' in n) or (n.startswith('nhom') and len(n) <= 7):  # thêm dòng này
+        # Nhóm thuốc - chỉ cần có chữ "nhóm"
+        elif 'nhom' in n:
             col_map[c] = 'Nhóm thuốc'
+        # Số lượng
         elif 'soluong' in n:
             col_map[c] = 'Số lượng'
-        elif 'duongdung' in n or 'duong' in n:
+        # Đường dùng - chỉ cần có "đường" hoặc "duongdung"
+        elif ('duongdung' in n) or ('duong' in n):
             col_map[c] = 'Đường dùng'
+        # Giá kế hoạch
         elif 'gia' in n:
             col_map[c] = 'Giá kế hoạch'
+        # Tên sản phẩm (nếu có)
+        elif ('tensanpham' in n) or ('sanpham' in n):
+            col_map[c] = 'Tên sản phẩm'
+
     df_body.rename(columns=col_map, inplace=True)
 
     # Prepare reference df2
