@@ -164,7 +164,7 @@ if option == "Lọc Danh Mục Thầu":
         sel = st.selectbox(f"Chọn {col}", opts)
         if sel != '(Tất cả)':
             df3_temp = df3_temp[df3_temp[col]==sel]
-    uploaded = None
+    #uploaded = None
     # 1. Thử upload bình thường
     try:
         uploaded = st.file_uploader("Tải lên file Danh Mục Mời Thầu (.xlsx)", type=['xlsx'])
