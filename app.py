@@ -175,13 +175,20 @@ if option == "Lọc Danh Mục Thầu":
             df3_temp = df3_temp[df3_temp[col]==sel]
     uploaded = st.file_uploader("Tải lên file Danh Mục Mời Thầu (.xlsx)", type=['xlsx'])
     if uploaded:
-        display_df, export_df = process_uploaded(uploaded, df3_temp)
-        st.success(f"✅ Tổng dòng khớp: {len(display_df)}")
+        def safe_str(x):
+    try:
+        # Nếu là NaN hoặc None thì trả về rỗng
+        if pd.isnull(x):
+            return ''
+        # Nếu là list, dict, object... thì chuyển sang chuỗi an toàn
+        return str(x)
+    except Exception:
+        return ''
         # Chuyển mọi giá trị trong DataFrame về chuỗi để tránh lỗi ValueError khi hiển thị
         if display_df is not None and not display_df.empty:
             display_df_fix = display_df.copy()
-            for col in display_df_fix.columns:
-                display_df_fix[col] = display_df_fix[col].apply(lambda x: str(x) if not pd.isnull(x) else '')
+        # Áp dụng safe_str cho toàn bộ bảng, chống mọi lỗi kiểu dữ liệu
+            display_df_fix = display_df_fix.applymap(safe_str)
             st.dataframe(display_df_fix)
         else:
             st.info("Không có dòng nào khớp hoặc dữ liệu rỗng.")
